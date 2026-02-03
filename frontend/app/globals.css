@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 230, 238, 247;
+  --background-start-rgb: 11, 15, 20;
+  --background-end-rgb: 14, 20, 27;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 230, 238, 247;
+    --background-start-rgb: 11, 15, 20;
+    --background-end-rgb: 14, 20, 27;
+  }
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1E2A36;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3B82F6;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2563EB;
+}
+
+/* Chat message styles */
+.chat-message {
+  @apply p-3 rounded-lg max-w-[80%] break-words;
+}
+
+.chat-user {
+  @apply bg-accent-blue text-white ml-auto;
+}
+
+.chat-assistant {
+  @apply bg-dark-surface text-dark-text mr-auto border border-dark-border;
+}
+
+/* Button styles */
+.btn-primary {
+  @apply bg-accent-blue hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors;
+}
+
+.btn-secondary {
+  @apply bg-dark-surface hover:bg-dark-border text-dark-text font-medium py-2 px-4 rounded-lg border border-dark-border transition-colors;
+}
+
+.btn-success {
+  @apply bg-accent-green hover:bg-green-600 text-white font-medium py-2 px-4 rounded-lg transition-colors;
+}
+
+/* Card styles */
+.card {
+  @apply bg-dark-surface border border-dark-border rounded-lg p-6;
+}
+
+/* Input styles */
+.input {
+  @apply bg-dark-bg border border-dark-border rounded-lg px-4 py-2 text-dark-text placeholder-gray-500 focus:outline-none focus:border-accent-blue;
+}
+
+/* Badge styles */
+.badge {
+  @apply px-2 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply badge bg-green-900 text-green-300;
+}
+
+.badge-warning {
+  @apply badge bg-yellow-900 text-yellow-300;
+}
+
+.badge-danger {
+  @apply badge bg-red-900 text-red-300;
+}
+
+.badge-info {
+  @apply badge bg-blue-900 text-blue-300;
+}
