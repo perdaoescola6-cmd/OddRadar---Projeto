@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BetStats Test Runner
+BetFaro Test Runner
 Runs all tests and generates a summary report
 """
 import subprocess
@@ -10,7 +10,7 @@ import os
 def run_tests():
     """Run all tests and display results"""
     print("=" * 60)
-    print("🧪 BetStats Test Suite")
+    print("🧪 BetFaro Test Suite")
     print("=" * 60)
     print()
     

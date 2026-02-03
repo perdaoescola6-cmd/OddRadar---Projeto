@@ -1,5 +1,5 @@
 """
-End-to-end tests for the BetStats chat flow
+End-to-end tests for the BetFaro chat flow
 Tests the complete flow from user input to analysis output
 """
 import pytest
@@ -221,7 +221,7 @@ class TestE2EHelpCommand:
         """Test /help command"""
         response = await chatbot.process_message("/help", user)
         assert response is not None
-        assert "BetStats" in response or "Como usar" in response
+        assert "BetFaro" in response or "Como usar" in response
     
     @pytest.mark.asyncio
     async def test_help_word(self, chatbot, user):

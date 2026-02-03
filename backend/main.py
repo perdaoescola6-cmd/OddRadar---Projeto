@@ -21,15 +21,17 @@ from picks_engine import picks_engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BetStats Trader API", version="1.0.0")
+app = FastAPI(title="BetFaro API", version="1.0.0")
 
-# CORS middleware
+# CORS middleware - Production configuration
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly for production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "X-Internal-Key", "X-Admin-Key"],
 )
 
 # Initialize chatbot
@@ -675,11 +677,43 @@ async def get_picks(
             detail="Não consegui atualizar os picks agora. Tente novamente em instantes."
         )
 
+# Internal picks endpoint (for Next.js API - no auth required, auth handled by Next.js)
+@app.get("/api/internal/picks")
+async def get_picks_internal(
+    range: str = "both",
+    refresh: bool = False,
+    x_internal_key: str = Header(None)
+):
+    """Internal endpoint for picks - called by Next.js API after auth verification"""
+    # Simple internal key check
+    internal_key = os.getenv("INTERNAL_API_KEY", "betfaro_internal_2024")
+    if x_internal_key != internal_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal key"
+        )
+    
+    # Validate range parameter
+    if range not in ["today", "tomorrow", "both"]:
+        range = "both"
+    
+    try:
+        result = await picks_engine.get_daily_picks(range_type=range, force_refresh=refresh)
+        logger.info(f"Internal picks generated: {len(result.get('picks', []))} picks")
+        return result
+    except Exception as e:
+        logger.error(f"Error generating picks: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não consegui atualizar os picks agora. Tente novamente em instantes."
+        )
+
 # Health check
 @app.get("/api/health")
+@app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+    return {"ok": True, "status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 if __name__ == "__main__":
     import uvicorn

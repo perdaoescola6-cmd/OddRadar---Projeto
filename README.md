@@ -1,4 +1,4 @@
-# BetStats Trader
+# BetFaro
 
 Plataforma premium de análise estatística para apostas esportivas com chatbot inteligente.
 
@@ -36,7 +36,7 @@ Plataforma premium de análise estatística para apostas esportivas com chatbot 
 ## 📁 Estrutura do Projeto
 
 ```
-betstats-trader/
+betfaro-trader/
 ├── backend/
 │   ├── main.py              # FastAPI app
 │   ├── models.py            # SQLModel models
@@ -70,7 +70,7 @@ betstats-trader/
 ### 1. Clonar o Projeto
 ```bash
 git clone <repository-url>
-cd betstats-trader
+cd betfaro-trader
 ```
 
 ### 2. Configurar Environment

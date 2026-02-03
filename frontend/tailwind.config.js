@@ -8,12 +8,18 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        'dark-bg': '#0B0F14',
-        'dark-surface': '#121A23',
+        'dark-bg': '#0B0E14',
+        'dark-surface': '#121826',
         'dark-border': '#1E2A36',
         'dark-text': '#E6EEF7',
-        'accent-green': '#10B981',
-        'accent-blue': '#3B82F6',
+        'caramelo': {
+          DEFAULT: '#D4A373',
+          hover: '#E7B984',
+          accent: '#C58B3A',
+          dark: '#A67C52',
+        },
+        'accent-blue': '#D4A373',
+        'accent-green': '#22C55E',
       },
     },
   },

@@ -1,5 +1,5 @@
 """
-Unit tests for the BetStats parser
+Unit tests for the BetFaro parser
 Tests parsing of team names, markets, and odds from user input
 """
 import pytest

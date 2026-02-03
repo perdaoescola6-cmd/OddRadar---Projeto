@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { 
   MessageCircle, 
   BarChart3, 
@@ -22,6 +23,7 @@ import {
   AlertCircle,
   Loader2
 } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
 
 interface Pick {
   market: string
@@ -87,30 +89,40 @@ export default function PicksPage() {
   }, [isElite, activeTab])
 
   const checkAuth = async () => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      setIsAuthenticated(false)
-      setLoading(false)
-      return
-    }
-
+    const supabase = createClient()
+    
     try {
-      const response = await fetch('/api/auth/me', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-
-      if (response.ok) {
-        const userData = await response.json()
-        setUser(userData)
-        setIsAuthenticated(true)
-        
-        // Check if Elite
-        const isElitePlan = userData.subscription?.plan?.toLowerCase() === 'elite'
-        setIsElite(isElitePlan)
-      } else {
-        localStorage.removeItem('token')
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      
+      if (!authUser) {
         setIsAuthenticated(false)
+        setLoading(false)
+        return
       }
+
+      // Fetch subscription data
+      const { data: subscription } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .maybeSingle()
+
+      const userData = {
+        id: authUser.id,
+        email: authUser.email || '',
+        subscription: subscription ? {
+          plan: subscription.plan,
+          expires_at: subscription.current_period_end,
+          status: subscription.status
+        } : undefined
+      }
+
+      setUser(userData as any)
+      setIsAuthenticated(true)
+      
+      // Check if Elite
+      const isElitePlan = subscription?.plan?.toLowerCase() === 'elite'
+      setIsElite(isElitePlan)
     } catch (error) {
       console.error('Auth check failed:', error)
       setIsAuthenticated(false)
@@ -120,8 +132,7 @@ export default function PicksPage() {
   }
 
   const fetchPicks = async (range: string, forceRefresh: boolean) => {
-    const token = localStorage.getItem('token')
-    if (!token) return
+    if (!isAuthenticated) return
 
     if (forceRefresh) {
       setRefreshing(true)
@@ -131,9 +142,7 @@ export default function PicksPage() {
     setError(null)
 
     try {
-      const response = await fetch(`/api/picks?range=${range}&refresh=${forceRefresh}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const response = await fetch(`/api/picks?range=${range}&refresh=${forceRefresh}`)
 
       if (response.ok) {
         const data: PicksResponse = await response.json()
@@ -155,8 +164,9 @@ export default function PicksPage() {
     fetchPicks(activeTab, true)
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
+  const handleLogout = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
     setUser(null)
     setIsAuthenticated(false)
     window.location.href = '/'
@@ -477,7 +487,7 @@ function Sidebar({
   return (
     <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-50 w-64 bg-dark-surface border-r border-dark-border transition-transform duration-300 lg:translate-x-0 lg:static lg:inset-0`}>
       <div className="flex items-center justify-between p-6 border-b border-dark-border">
-        <h2 className="text-xl font-bold text-accent-blue">BetStats</h2>
+        <h2 className="text-xl font-bold text-accent-blue">BetFaro</h2>
         <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-gray-400 hover:text-white">
           <X size={24} />
         </button>

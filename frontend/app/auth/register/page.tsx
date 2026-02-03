@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Eye, EyeOff, UserPlus, ArrowLeft, Check } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
 
 export default function Register() {
   const [email, setEmail] = useState('')
@@ -12,7 +13,9 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState(false)
   const router = useRouter()
+  const supabase = createClient()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -25,20 +28,36 @@ export default function Register() {
       return
     }
 
+    if (password.length < 6) {
+      setError('A senha deve ter pelo menos 6 caracteres')
+      setIsLoading(false)
+      return
+    }
+
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
-        body: JSON.stringify({ email, password }),
       })
 
-      if (response.ok) {
-        router.push('/auth/login?message=Conta criada com sucesso')
-      } else {
-        const errorData = await response.json()
-        setError(errorData.detail || 'Erro ao criar conta')
+      if (signUpError) {
+        if (signUpError.message.includes('already registered')) {
+          setError('Este email já está cadastrado')
+        } else {
+          setError(signUpError.message)
+        }
+        return
+      }
+
+      if (data.user) {
+        setSuccess(true)
+        // Auto login after signup
+        setTimeout(() => {
+          router.push('/')
+        }, 2000)
       }
     } catch (error) {
       setError('Erro de conexão. Tente novamente.')
@@ -72,12 +91,19 @@ export default function Register() {
         
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500 to-green-600 mb-4 shadow-lg shadow-green-500/30">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-caramelo to-caramelo-accent mb-4 shadow-lg shadow-caramelo/30">
             <UserPlus size={28} className="text-white" />
           </div>
           <h1 className="text-3xl font-bold text-gradient mb-2">Criar Conta</h1>
           <p className="text-gray-400">Comece sua jornada de análises premium</p>
         </div>
+
+        {success && (
+          <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl text-green-400 flex items-center gap-3">
+            <Check className="w-5 h-5 flex-shrink-0" />
+            <span>Conta criada com sucesso! Redirecionando...</span>
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 flex items-center gap-3">
@@ -98,7 +124,7 @@ export default function Register() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 focus:ring-2 focus:ring-green-500/20 transition-all"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-gray-500 focus:outline-none focus:border-caramelo/50 focus:ring-2 focus:ring-caramelo/20 transition-all"
               placeholder="seu@email.com"
               required
             />
@@ -114,7 +140,7 @@ export default function Register() {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 pr-12 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 focus:ring-2 focus:ring-green-500/20 transition-all"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 pr-12 text-white placeholder-gray-500 focus:outline-none focus:border-caramelo/50 focus:ring-2 focus:ring-caramelo/20 transition-all"
                 placeholder="••••••••"
                 required
                 minLength={6}
@@ -138,7 +164,7 @@ export default function Register() {
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 focus:ring-2 focus:ring-green-500/20 transition-all"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-gray-500 focus:outline-none focus:border-caramelo/50 focus:ring-2 focus:ring-caramelo/20 transition-all"
               placeholder="••••••••"
               required
               minLength={6}
@@ -150,7 +176,7 @@ export default function Register() {
             disabled={isLoading}
             className="group relative w-full py-4 px-6 rounded-xl font-semibold text-white overflow-hidden transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
-            <div className="absolute inset-0 bg-gradient-to-r from-green-600 to-green-500 transition-all duration-300 group-hover:from-green-500 group-hover:to-green-400"></div>
+            <div className="absolute inset-0 bg-gradient-to-r from-caramelo to-caramelo-accent transition-all duration-300 group-hover:from-caramelo-hover group-hover:to-caramelo"></div>
             <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-[radial-gradient(circle_at_50%_-20%,rgba(255,255,255,0.3),transparent_70%)]"></div>
             <span className="relative flex items-center justify-center gap-2">
               {isLoading ? (
@@ -174,7 +200,7 @@ export default function Register() {
         <div className="mt-8 text-center">
           <p className="text-gray-400">
             Já tem uma conta?{' '}
-            <Link href="/auth/login" className="text-green-400 hover:text-green-300 font-medium transition-colors">
+            <Link href="/auth/login" className="text-caramelo hover:text-caramelo-hover font-medium transition-colors">
               Faça login
             </Link>
           </p>

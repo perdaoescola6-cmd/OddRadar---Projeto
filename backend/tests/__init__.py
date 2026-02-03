@@ -1,1 +1,1 @@
-# BetStats Test Suite
+# BetFaro Test Suite

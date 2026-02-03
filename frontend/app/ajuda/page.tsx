@@ -109,7 +109,7 @@ export default function AjudaPage() {
       {/* Sidebar */}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-50 w-64 bg-dark-surface border-r border-dark-border transition-transform duration-300 lg:translate-x-0 lg:static lg:inset-0`}>
         <div className="flex items-center justify-between p-6 border-b border-dark-border">
-          <h2 className="text-xl font-bold text-accent-blue">BetStats</h2>
+          <h2 className="text-xl font-bold text-accent-blue">BetFaro</h2>
           <button
             onClick={() => setSidebarOpen(false)}
             className="lg:hidden text-gray-400 hover:text-white"
@@ -155,7 +155,7 @@ export default function AjudaPage() {
                 <Menu size={24} />
               </button>
               <h1 className="text-xl font-semibold flex items-center gap-2">
-                <HelpCircle className="text-blue-400" size={24} />
+                <HelpCircle className="text-caramelo" size={24} />
                 Central de Ajuda
               </h1>
             </div>
@@ -169,7 +169,7 @@ export default function AjudaPage() {
             {/* Hero Section */}
             <div className="text-center mb-10">
               <h1 className="text-3xl font-bold mb-3 bg-gradient-to-r from-blue-400 to-green-400 bg-clip-text text-transparent">
-                Como usar o BetStats
+                Como usar o BetFaro
               </h1>
               <p className="text-gray-400 text-lg">
                 Guia completo para aproveitar ao máximo suas análises
@@ -180,22 +180,22 @@ export default function AjudaPage() {
             <section className="bg-dark-surface border border-dark-border rounded-2xl p-6">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                  <Zap className="text-blue-400" size={20} />
+                  <Zap className="text-caramelo" size={20} />
                 </div>
                 <h2 className="text-xl font-semibold">Como o bot funciona</h2>
               </div>
               
               <div className="space-y-4 text-gray-300">
                 <div className="flex items-start gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold">1</span>
+                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-caramelo flex items-center justify-center text-sm font-bold">1</span>
                   <p><strong>Identifica os times</strong> no texto que você digita</p>
                 </div>
                 <div className="flex items-start gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold">2</span>
+                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-caramelo flex items-center justify-center text-sm font-bold">2</span>
                   <p><strong>Busca a partida</strong> correta na API (próximos jogos / fixtures)</p>
                 </div>
                 <div className="flex items-start gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold">3</span>
+                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-caramelo flex items-center justify-center text-sm font-bold">3</span>
                   <div>
                     <p className="mb-2"><strong>Para análise, usa:</strong></p>
                     <ul className="ml-4 space-y-1 text-sm text-gray-400">
@@ -251,7 +251,7 @@ export default function AjudaPage() {
                   {examples.markets.map((ex, i) => (
                     <div key={i} className="flex items-center justify-between bg-dark-bg rounded-lg p-3">
                       <div className="flex items-center gap-3">
-                        <code className="bg-dark-border px-3 py-1.5 rounded-lg text-blue-400 font-mono text-sm">
+                        <code className="bg-dark-border px-3 py-1.5 rounded-lg text-caramelo font-mono text-sm">
                           {ex.text}
                         </code>
                         <span className="text-gray-500 text-sm">{ex.description}</span>

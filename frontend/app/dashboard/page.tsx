@@ -16,6 +16,7 @@ import {
   Diamond,
   Edit3
 } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
 
 interface Bet {
   id: string
@@ -60,21 +61,37 @@ export default function DashboardPage() {
   const [note, setNote] = useState('')
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/auth/login')
-      return
+    const checkAuth = async () => {
+      const supabase = createClient()
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      
+      if (!authUser) {
+        router.push('/auth/login')
+        return
+      }
+
+      // Fetch subscription data
+      const { data: subscription } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .maybeSingle()
+
+      setUser({
+        id: authUser.id,
+        email: authUser.email,
+        subscription: subscription ? {
+          plan: subscription.plan,
+          expires_at: subscription.current_period_end,
+          status: subscription.status
+        } : undefined
+      })
     }
 
-    fetch('http://localhost:8000/api/me', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(res => res.json())
-      .then(data => setUser(data))
-      .catch(() => router.push('/auth/login'))
+    checkAuth()
     
     // Load bets from localStorage
-    const savedBets = localStorage.getItem('betstats_bets')
+    const savedBets = localStorage.getItem('betfaro_bets')
     if (savedBets) {
       setBets(JSON.parse(savedBets))
     }
@@ -83,7 +100,7 @@ export default function DashboardPage() {
   // Save bets to localStorage whenever they change
   useEffect(() => {
     if (bets.length > 0) {
-      localStorage.setItem('betstats_bets', JSON.stringify(bets))
+      localStorage.setItem('betfaro_bets', JSON.stringify(bets))
     }
   }, [bets])
 
@@ -370,7 +387,7 @@ export default function DashboardPage() {
                   type="text"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="Ex: Análise do BetStats"
+                  placeholder="Ex: Análise do BetFaro"
                   className="w-full px-3 py-2 bg-dark-bg border border-dark-border rounded-lg focus:border-blue-500 focus:outline-none"
                 />
               </div>

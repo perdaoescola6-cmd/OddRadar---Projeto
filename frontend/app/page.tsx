@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { MessageCircle, BarChart3, CreditCard, User, LogOut, Send, Menu, X, Trash2, HelpCircle, Target } from 'lucide-react'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 
 interface Message {
   id: string
@@ -11,26 +12,28 @@ interface Message {
   timestamp: Date
 }
 
-interface User {
-  id: number
+interface UserData {
+  id: string
   email: string
   subscription?: {
     plan: string
-    expires_at: string
     status: string
-  }
+    current_period_end: string
+  } | null
 }
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<UserData | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true)
   const [showClearModal, setShowClearModal] = useState(false)
   const [showHelpTooltip, setShowHelpTooltip] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const supabase = createClient()
 
   const quickSuggestions = [
     "Benfica x Porto",
@@ -41,6 +44,19 @@ export default function Home() {
 
   useEffect(() => {
     checkAuth()
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        loadUserData(session.user.id, session.user.email || '')
+        setIsAuthenticated(true)
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null)
+        setIsAuthenticated(false)
+      }
+    })
+
+    return () => subscription.unsubscribe()
   }, [])
 
   // Auto-scroll to bottom when new messages arrive
@@ -49,31 +65,45 @@ export default function Home() {
   }, [messages, isLoading])
 
   const checkAuth = async () => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      setIsAuthenticated(false)
-      return
-    }
-
+    setIsCheckingAuth(true)
     try {
-      const response = await fetch('/api/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
+      const { data: { user: authUser } } = await supabase.auth.getUser()
 
-      if (response.ok) {
-        const userData = await response.json()
-        setUser(userData)
+      if (authUser) {
+        await loadUserData(authUser.id, authUser.email || '')
         setIsAuthenticated(true)
-        loadChatHistory()
       } else {
-        localStorage.removeItem('token')
         setIsAuthenticated(false)
       }
     } catch (error) {
       console.error('Auth check failed:', error)
       setIsAuthenticated(false)
+    } finally {
+      setIsCheckingAuth(false)
+    }
+  }
+
+  const loadUserData = async (userId: string, email: string) => {
+    try {
+      // Get subscription data
+      const { data: subscription } = await supabase
+        .from('subscriptions')
+        .select('plan, status, current_period_end')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      setUser({
+        id: userId,
+        email: email,
+        subscription: subscription
+      })
+    } catch (error) {
+      console.error('Failed to load user data:', error)
+      setUser({
+        id: userId,
+        email: email,
+        subscription: null
+      })
     }
   }
 
@@ -162,8 +192,8 @@ export default function Home() {
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
     setIsAuthenticated(false)
     setMessages([])
@@ -173,6 +203,18 @@ export default function Home() {
     setMessages([])
     localStorage.removeItem('chatHistory')
     setShowClearModal(false)
+  }
+
+  // Show loading while checking auth
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-dark-bg">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-gray-400">Carregando...</p>
+        </div>
+      </div>
+    )
   }
 
   if (!isAuthenticated) {
@@ -190,18 +232,18 @@ export default function Home() {
         <div className="football-icon">⚽</div>
         
         {/* Animated Gradient Orbs */}
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-caramelo/10 rounded-full blur-3xl animate-pulse"></div>
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-green-500/10 rounded-full blur-3xl animate-pulse" style={{animationDelay: '1s'}}></div>
         
         {/* Main Card */}
         <div className="glass-card max-w-md w-full p-8 relative z-10">
           {/* Logo/Header */}
           <div className="text-center mb-10">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-green-500 mb-6 shadow-lg shadow-blue-500/30">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-caramelo to-caramelo-accent mb-6 shadow-lg shadow-caramelo/30">
               <span className="text-4xl">⚽</span>
             </div>
-            <h1 className="text-4xl font-bold text-gradient mb-3">BetStats Trader</h1>
-            <p className="text-gray-400 text-lg">Análise Premium de Apostas Esportivas</p>
+            <h1 className="text-4xl font-bold text-gradient mb-3">BetFaro</h1>
+            <p className="text-gray-400 text-lg">Aposte como um insider 🐕</p>
           </div>
           
           {/* Buttons */}
@@ -210,7 +252,7 @@ export default function Home() {
               href="/auth/login" 
               className="group relative w-full block text-center py-4 px-6 rounded-xl font-semibold text-white overflow-hidden transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
             >
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-blue-500 transition-all duration-300 group-hover:from-blue-500 group-hover:to-blue-400"></div>
+              <div className="absolute inset-0 bg-gradient-to-r from-caramelo to-caramelo-accent transition-all duration-300 group-hover:from-caramelo-hover group-hover:to-caramelo"></div>
               <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-[radial-gradient(circle_at_50%_-20%,rgba(255,255,255,0.3),transparent_70%)]"></div>
               <span className="relative flex items-center justify-center gap-2">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -238,7 +280,7 @@ export default function Home() {
           <div className="pt-8 border-t border-white/10">
             <h3 className="text-lg font-semibold mb-6 text-center text-gray-300">
               <span className="inline-flex items-center gap-2">
-                <svg className="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                <svg className="w-5 h-5 text-caramelo" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                 </svg>
                 Planos Disponíveis
@@ -247,24 +289,24 @@ export default function Home() {
             <div className="space-y-3">
               <div className="flex justify-between items-center p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                    <span className="text-blue-400 text-sm font-bold">P</span>
+                  <div className="w-8 h-8 rounded-lg bg-gray-500/20 flex items-center justify-center">
+                    <span className="text-gray-400 text-sm font-bold">⚡</span>
                   </div>
-                  <span className="font-medium">Plus</span>
+                  <span className="font-medium">Free</span>
                 </div>
-                <span className="text-green-400 font-bold">R$30<span className="text-xs text-gray-500">/mês</span></span>
+                <span className="text-gray-400 font-bold">Grátis</span>
               </div>
-              <div className="flex justify-between items-center p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors border border-yellow-500/20">
+              <div className="flex justify-between items-center p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors border border-caramelo/30">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center">
-                    <span className="text-yellow-400 text-sm font-bold">⭐</span>
+                  <div className="w-8 h-8 rounded-lg bg-caramelo/20 flex items-center justify-center">
+                    <span className="text-caramelo text-sm font-bold">⭐</span>
                   </div>
                   <div>
                     <span className="font-medium">Pro</span>
-                    <span className="ml-2 text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">Popular</span>
+                    <span className="ml-2 text-xs bg-caramelo/20 text-caramelo px-2 py-0.5 rounded-full">Popular</span>
                   </div>
                 </div>
-                <span className="text-green-400 font-bold">R$60<span className="text-xs text-gray-500">/mês</span></span>
+                <span className="text-green-400 font-bold">R$49<span className="text-xs text-gray-500">/mês</span></span>
               </div>
               <div className="flex justify-between items-center p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
                 <div className="flex items-center gap-3">
@@ -273,7 +315,7 @@ export default function Home() {
                   </div>
                   <span className="font-medium">Elite</span>
                 </div>
-                <span className="text-green-400 font-bold">R$100<span className="text-xs text-gray-500">/mês</span></span>
+                <span className="text-green-400 font-bold">R$99<span className="text-xs text-gray-500">/mês</span></span>
               </div>
             </div>
           </div>
@@ -281,7 +323,7 @@ export default function Home() {
           {/* Footer */}
           <div className="mt-8 text-center">
             <p className="text-xs text-gray-500">
-              🔒 Pagamento seguro via Mercado Pago
+              🔒 Pagamento seguro via Stripe
             </p>
           </div>
         </div>
@@ -294,7 +336,7 @@ export default function Home() {
       {/* Sidebar */}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-50 w-64 bg-dark-surface border-r border-dark-border transition-transform duration-300 lg:translate-x-0 lg:static lg:inset-0`}>
         <div className="flex items-center justify-between p-6 border-b border-dark-border">
-          <h2 className="text-xl font-bold text-accent-blue">BetStats</h2>
+          <h2 className="text-xl font-bold text-accent-blue">BetFaro</h2>
           <button
             onClick={() => setSidebarOpen(false)}
             className="lg:hidden text-gray-400 hover:text-white"
@@ -370,7 +412,7 @@ export default function Home() {
                 <button
                   onMouseEnter={() => setShowHelpTooltip(true)}
                   onMouseLeave={() => setShowHelpTooltip(false)}
-                  className="flex items-center justify-center w-7 h-7 text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors"
+                  className="flex items-center justify-center w-7 h-7 text-gray-400 hover:text-caramelo hover:bg-caramelo/10 rounded-lg transition-colors"
                 >
                   <HelpCircle size={16} />
                 </button>
@@ -379,7 +421,7 @@ export default function Home() {
                 {showHelpTooltip && (
                   <div className="absolute right-0 top-full mt-2 w-72 p-4 bg-dark-surface border border-dark-border rounded-xl shadow-2xl z-50">
                     <div className="absolute -top-2 right-4 w-4 h-4 bg-dark-surface border-l border-t border-dark-border transform rotate-45"></div>
-                    <h4 className="font-semibold text-blue-400 mb-2 text-sm">📖 Como pesquisar</h4>
+                    <h4 className="font-semibold text-caramelo mb-2 text-sm">📖 Como pesquisar</h4>
                     <ul className="text-xs text-gray-300 space-y-1.5">
                       <li className="flex items-start gap-2">
                         <span className="text-green-400">•</span>
@@ -390,11 +432,11 @@ export default function Home() {
                         <span>Ex.: <code className="bg-dark-border px-1 rounded">Arsenal x Chelsea</code></span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <span className="text-blue-400">•</span>
+                        <span className="text-caramelo">•</span>
                         <span>Opcional: mercados (<code className="bg-dark-border px-1 rounded">over 2.5</code>, <code className="bg-dark-border px-1 rounded">btts sim</code>)</span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <span className="text-blue-400">•</span>
+                        <span className="text-caramelo">•</span>
                         <span>Opcional: odds (<code className="bg-dark-border px-1 rounded">@2.10</code>)</span>
                       </li>
                       <li className="flex items-start gap-2">
@@ -402,7 +444,7 @@ export default function Home() {
                         <span>Se houver nomes parecidos, o bot pedirá confirmação</span>
                       </li>
                     </ul>
-                    <Link href="/ajuda" className="block mt-3 text-xs text-blue-400 hover:text-blue-300 font-medium">
+                    <Link href="/ajuda" className="block mt-3 text-xs text-caramelo hover:text-caramelo-hover font-medium">
                       Ver ajuda completa →
                     </Link>
                   </div>

@@ -1,9 +1,9 @@
 @echo off
-title BetStats Trader - Encerrar
+title BetFaro - Encerrar
 color 0C
 
 echo ============================================
-echo    BetStats Trader - Encerrando...
+echo    BetFaro - Encerrando...
 echo ============================================
 echo.
 
@@ -17,7 +17,7 @@ taskkill /F /IM python.exe >nul 2>&1
 
 echo.
 echo ============================================
-echo    BetStats Trader Encerrado!
+echo    BetFaro Encerrado!
 echo ============================================
 echo.
 pause

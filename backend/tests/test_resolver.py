@@ -1,5 +1,5 @@
 """
-Integration tests for the BetStats team resolver
+Integration tests for the BetFaro team resolver
 Tests team resolution against the API with fuzzy matching
 """
 import pytest

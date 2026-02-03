@@ -12,31 +12,47 @@ import {
   CreditCard,
   LogOut
 } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
 
 export default function AccountPage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/auth/login')
-      return
+    const checkAuth = async () => {
+      const supabase = createClient()
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      
+      if (!authUser) {
+        router.push('/auth/login')
+        return
+      }
+
+      // Fetch subscription data
+      const { data: subscription } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .maybeSingle()
+
+      setUser({
+        id: authUser.id,
+        email: authUser.email,
+        created_at: authUser.created_at,
+        subscription: subscription ? {
+          plan: subscription.plan,
+          expires_at: subscription.current_period_end,
+          status: subscription.status
+        } : undefined
+      })
     }
 
-    fetch('/api/auth/me', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('Unauthorized')
-        return res.json()
-      })
-      .then(data => setUser(data))
-      .catch(() => router.push('/auth/login'))
+    checkAuth()
   }, [router])
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
+  const handleLogout = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
     router.push('/auth/login')
   }
 

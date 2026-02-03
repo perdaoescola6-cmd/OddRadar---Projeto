@@ -4,17 +4,27 @@
 
 :root {
   --foreground-rgb: 230, 238, 247;
-  --background-start-rgb: 11, 15, 20;
-  --background-end-rgb: 14, 20, 27;
+  --background-start-rgb: 11, 14, 20;
+  --background-end-rgb: 18, 24, 38;
+  
+  /* BetFaro Caramelo Dark Palette */
+  --caramelo-primary: #D4A373;
+  --caramelo-hover: #E7B984;
+  --caramelo-accent: #C58B3A;
+  --caramelo-dark: #A67C52;
+  --bg-primary: #0B0E14;
+  --bg-card: #121826;
+  --success: #22C55E;
+  --error: #EF4444;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(135deg, #0B0F14 0%, #0d1a26 50%, #0B0F14 100%);
+  background: linear-gradient(135deg, #0B0E14 0%, #121826 50%, #0B0E14 100%);
   min-height: 100vh;
 }
 
-/* Animated Football Background */
+/* Animated Background - Caramelo Theme */
 .football-bg {
   position: fixed;
   top: 0;
@@ -24,9 +34,9 @@ body {
   overflow: hidden;
   z-index: -1;
   background: 
-    radial-gradient(ellipse at 20% 80%, rgba(16, 185, 129, 0.1) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 20%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(16, 185, 129, 0.05) 0%, transparent 70%);
+    radial-gradient(ellipse at 20% 80%, rgba(212, 163, 115, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(197, 139, 58, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(212, 163, 115, 0.04) 0%, transparent 70%);
 }
 
 /* Floating Football Icons */
@@ -50,7 +60,7 @@ body {
   75% { transform: translateY(20px) rotate(-5deg); }
 }
 
-/* Grid Pattern Overlay */
+/* Grid Pattern Overlay - Caramelo */
 .grid-pattern {
   position: fixed;
   top: 0;
@@ -58,46 +68,46 @@ body {
   width: 100%;
   height: 100%;
   background-image: 
-    linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(212, 163, 115, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(212, 163, 115, 0.02) 1px, transparent 1px);
   background-size: 50px 50px;
   z-index: -1;
 }
 
-/* Glassmorphism Card */
+/* Glassmorphism Card - Caramelo */
 .glass-card {
-  background: rgba(18, 26, 35, 0.8);
+  background: rgba(18, 24, 38, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  border: 1px solid rgba(212, 163, 115, 0.2);
   border-radius: 24px;
   box-shadow: 
     0 8px 32px rgba(0, 0, 0, 0.4),
     0 0 0 1px rgba(255, 255, 255, 0.05) inset,
-    0 0 80px rgba(59, 130, 246, 0.1);
+    0 0 80px rgba(212, 163, 115, 0.08);
 }
 
-/* Glow Effects */
-.glow-blue {
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.4), 0 0 40px rgba(59, 130, 246, 0.2);
+/* Glow Effects - Caramelo */
+.glow-caramelo {
+  box-shadow: 0 0 20px rgba(212, 163, 115, 0.4), 0 0 40px rgba(212, 163, 115, 0.2);
 }
 
 .glow-green {
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.4), 0 0 40px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.4), 0 0 40px rgba(34, 197, 94, 0.2);
 }
 
-/* Text Gradient */
+/* Text Gradient - Caramelo */
 .text-gradient {
-  background: linear-gradient(135deg, #3B82F6 0%, #10B981 100%);
+  background: linear-gradient(135deg, #D4A373 0%, #E7B984 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Pulse Animation */
+/* Pulse Animation - Caramelo */
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); }
-  50% { box-shadow: 0 0 40px rgba(59, 130, 246, 0.6), 0 0 60px rgba(59, 130, 246, 0.3); }
+  0%, 100% { box-shadow: 0 0 20px rgba(212, 163, 115, 0.4); }
+  50% { box-shadow: 0 0 40px rgba(212, 163, 115, 0.6), 0 0 60px rgba(212, 163, 115, 0.3); }
 }
 
 .pulse-glow {
@@ -138,22 +148,22 @@ body {
   color: #64748b;
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar - Caramelo */
 ::-webkit-scrollbar {
   width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1E2A36;
+  background: #121826;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3B82F6;
+  background: #D4A373;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2563EB;
+  background: #E7B984;
 }
 
 /* Chat message styles */
