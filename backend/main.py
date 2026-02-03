@@ -5,12 +5,17 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 import os
 import logging
+from dotenv import load_dotenv
 
-from .database import create_db_and_tables, get_session
-from .models import User, Subscription, ChatMessage, AuditLog
-from .schemas import UserCreate, UserLogin, UserResponse, Token, ChatMessage, ChatResponse, AdminGrantRequest, AdminRevokeRequest, SubscriptionResponse
-from .auth import get_current_user, get_admin_user, verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
-from .chatbot import ChatBot
+# Load environment variables from .env file
+load_dotenv(dotenv_path="../.env")
+
+from database import create_db_and_tables, get_session
+from models import User, Subscription, ChatMessage, AuditLog
+from schemas import UserCreate, UserLogin, UserResponse, Token, ChatMessageRequest, ChatResponse, AdminGrantRequest, AdminRevokeRequest, SubscriptionResponse
+from auth import get_current_user, get_admin_user, verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from chatbot import ChatBot
+from picks_engine import picks_engine
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -130,10 +135,29 @@ async def login(user_data: UserLogin, session: Session = Depends(get_session)):
     logger.info(f"User logged in: {user.email}")
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/api/auth/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """Get current user info"""
-    return current_user
+@app.get("/api/auth/me")
+async def get_current_user_info(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    """Get current user info with subscription"""
+    # Get active subscription
+    subscription = session.exec(
+        select(Subscription).where(
+            Subscription.user_id == current_user.id,
+            Subscription.status == "active",
+            Subscription.expires_at > datetime.utcnow()
+        ).order_by(Subscription.created_at.desc())
+    ).first()
+    
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "created_at": current_user.created_at,
+        "is_active": current_user.is_active,
+        "subscription": {
+            "plan": subscription.plan,
+            "status": subscription.status,
+            "expires_at": subscription.expires_at
+        } if subscription else None
+    }
 
 @app.get("/api/auth/subscription")
 async def get_subscription_status(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
@@ -162,7 +186,7 @@ async def get_subscription_status(current_user: User = Depends(get_current_user)
 
 # Chat endpoints
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(message: ChatMessage, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+async def chat(message: ChatMessageRequest, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     """Process chat message"""
     # Check subscription
     if not check_user_subscription(current_user):
@@ -176,6 +200,7 @@ async def chat(message: ChatMessage, current_user: User = Depends(get_current_us
         user_id=current_user.id,
         role="user",
         content=message.content,
+        extra_data=None,
         created_at=datetime.utcnow()
     )
     session.add(user_message)
@@ -189,6 +214,7 @@ async def chat(message: ChatMessage, current_user: User = Depends(get_current_us
             user_id=current_user.id,
             role="assistant",
             content=response,
+            extra_data=None,
             created_at=datetime.utcnow()
         )
         session.add(bot_message)
@@ -202,10 +228,20 @@ async def chat(message: ChatMessage, current_user: User = Depends(get_current_us
         )
         
     except Exception as e:
-        logger.error(f"Chat processing error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing message"
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Chat processing error: {str(e)}\n{error_trace}")
+        
+        # Return friendly error message instead of generic error
+        error_response = "⚠️ A API está instável agora. Tente novamente em alguns segundos.\n\n"
+        error_response += "Se o problema persistir, verifique:\n"
+        error_response += "  • Se os nomes dos times estão corretos\n"
+        error_response += "  • Use o formato: Time A x Time B\n\n"
+        error_response += "💡 Exemplos: Arsenal x Chelsea, Benfica vs Porto"
+        
+        return ChatResponse(
+            response=error_response,
+            timestamp=datetime.utcnow()
         )
 
 @app.get("/api/chat/history")
@@ -477,6 +513,167 @@ async def get_user_details(
             for log in audit_logs
         ]
     }
+
+@app.patch("/api/admin/users/{user_id}/subscription")
+async def update_user_subscription(
+    user_id: int,
+    plan: str = None,
+    status: str = None,
+    days: int = None,
+    session: Session = Depends(get_session),
+    _: bool = Depends(check_admin_api_key)
+):
+    """Update user subscription - Admin only"""
+    # Find user
+    user = session.exec(select(User).where(User.id == user_id)).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Validate plan
+    valid_plans = ["free", "plus", "pro", "elite"]
+    if plan and plan.lower() not in valid_plans:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid plan. Must be one of: {', '.join(valid_plans)}"
+        )
+    
+    # Handle "free" plan - cancel subscription
+    if plan and plan.lower() == "free":
+        existing = session.exec(
+            select(Subscription).where(
+                Subscription.user_id == user.id,
+                Subscription.status == "active"
+            )
+        ).all()
+        
+        for sub in existing:
+            sub.status = "cancelled"
+            sub.updated_at = datetime.utcnow()
+        
+        # Log action
+        audit = AuditLog(
+            user_id=user.id,
+            action="subscription_cancelled_by_admin",
+            details={"previous_plan": existing[0].plan if existing else None}
+        )
+        session.add(audit)
+        session.commit()
+        
+        return {
+            "id": user.id,
+            "email": user.email,
+            "subscription": None,
+            "message": "Subscription cancelled"
+        }
+    
+    # Get or create subscription
+    subscription = session.exec(
+        select(Subscription).where(
+            Subscription.user_id == user.id,
+            Subscription.status == "active"
+        )
+    ).first()
+    
+    if subscription:
+        # Update existing
+        old_plan = subscription.plan
+        if plan:
+            subscription.plan = plan.lower()
+        if status:
+            subscription.status = status
+        if days:
+            subscription.expires_at = datetime.utcnow() + timedelta(days=days)
+        subscription.updated_at = datetime.utcnow()
+    else:
+        # Create new subscription
+        old_plan = None
+        subscription = Subscription(
+            user_id=user.id,
+            plan=plan.lower() if plan else "plus",
+            status="active",
+            expires_at=datetime.utcnow() + timedelta(days=days or 30),
+            updated_at=datetime.utcnow()
+        )
+        session.add(subscription)
+    
+    # Log action
+    audit = AuditLog(
+        user_id=user.id,
+        action="subscription_updated_by_admin",
+        details={
+            "old_plan": old_plan,
+            "new_plan": subscription.plan,
+            "expires_at": subscription.expires_at.isoformat(),
+            "provider": "manual"
+        }
+    )
+    session.add(audit)
+    session.commit()
+    session.refresh(subscription)
+    
+    logger.info(f"Subscription updated for {user.email}: {subscription.plan}")
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "subscription": {
+            "id": subscription.id,
+            "plan": subscription.plan,
+            "status": subscription.status,
+            "expires_at": subscription.expires_at,
+            "provider": "manual"
+        },
+        "message": "Subscription updated successfully"
+    }
+
+# Picks endpoints (Elite only)
+@app.get("/api/picks")
+async def get_picks(
+    range: str = "both",
+    refresh: bool = False,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get daily picks - Elite only feature"""
+    # Check subscription
+    subscription = session.exec(
+        select(Subscription).where(
+            Subscription.user_id == current_user.id,
+            Subscription.status == "active",
+            Subscription.expires_at > datetime.utcnow()
+        )
+    ).first()
+    
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required"
+        )
+    
+    # Check if Elite plan
+    if subscription.plan.lower() != "elite":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Picks Diários é exclusivo do plano Elite. Faça upgrade para receber as melhores oportunidades automaticamente."
+        )
+    
+    # Validate range parameter
+    if range not in ["today", "tomorrow", "both"]:
+        range = "both"
+    
+    try:
+        result = await picks_engine.get_daily_picks(range_type=range, force_refresh=refresh)
+        logger.info(f"Picks generated for user {current_user.email}: {len(result.get('picks', []))} picks")
+        return result
+    except Exception as e:
+        logger.error(f"Error generating picks: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não consegui atualizar os picks agora. Tente novamente em instantes."
+        )
 
 # Health check
 @app.get("/api/health")

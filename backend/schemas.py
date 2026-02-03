@@ -23,8 +23,9 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-class ChatMessage(BaseModel):
+class ChatMessageRequest(BaseModel):
     content: str
+    extra_data: Optional[dict] = None
 
 class ChatResponse(BaseModel):
     response: str

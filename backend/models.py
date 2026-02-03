@@ -25,7 +25,7 @@ class ChatMessage(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     role: str = Field()  # "user" or "assistant"
     content: str = Field()
-    metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    extra_data: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class AuditLog(SQLModel, table=True):

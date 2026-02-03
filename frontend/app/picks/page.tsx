@@ -1,0 +1,533 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import Link from 'next/link'
+import { 
+  MessageCircle, 
+  BarChart3, 
+  CreditCard, 
+  User, 
+  LogOut, 
+  Menu, 
+  X, 
+  HelpCircle,
+  Target,
+  RefreshCw,
+  TrendingUp,
+  Clock,
+  Shield,
+  Zap,
+  Crown,
+  ChevronRight,
+  AlertCircle,
+  Loader2
+} from 'lucide-react'
+
+interface Pick {
+  market: string
+  confidence: number
+  confidence_level: string
+  justification: string
+}
+
+interface PickResult {
+  fixture_id: number
+  home_team: string
+  away_team: string
+  league: string
+  league_country: string
+  date: string
+  date_iso: string
+  picks: Pick[]
+  games_analyzed: number
+}
+
+interface PicksResponse {
+  picks: PickResult[]
+  meta: {
+    range: string
+    generated_at: string
+    total_fixtures_fetched: number
+    priority_fixtures: number
+    analyzed_success: number
+    analyzed_failed: number
+  }
+}
+
+interface UserData {
+  id: number
+  email: string
+  subscription?: {
+    plan: string
+    expires_at: string
+    status: string
+  }
+}
+
+export default function PicksPage() {
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [user, setUser] = useState<UserData | null>(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isElite, setIsElite] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [picks, setPicks] = useState<PickResult[]>([])
+  const [meta, setMeta] = useState<PicksResponse['meta'] | null>(null)
+  const [activeTab, setActiveTab] = useState<'both' | 'today' | 'tomorrow'>('both')
+
+  useEffect(() => {
+    checkAuth()
+  }, [])
+
+  useEffect(() => {
+    if (isElite) {
+      fetchPicks(activeTab, false)
+    }
+  }, [isElite, activeTab])
+
+  const checkAuth = async () => {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      setIsAuthenticated(false)
+      setLoading(false)
+      return
+    }
+
+    try {
+      const response = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (response.ok) {
+        const userData = await response.json()
+        setUser(userData)
+        setIsAuthenticated(true)
+        
+        // Check if Elite
+        const isElitePlan = userData.subscription?.plan?.toLowerCase() === 'elite'
+        setIsElite(isElitePlan)
+      } else {
+        localStorage.removeItem('token')
+        setIsAuthenticated(false)
+      }
+    } catch (error) {
+      console.error('Auth check failed:', error)
+      setIsAuthenticated(false)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fetchPicks = async (range: string, forceRefresh: boolean) => {
+    const token = localStorage.getItem('token')
+    if (!token) return
+
+    if (forceRefresh) {
+      setRefreshing(true)
+    } else {
+      setLoading(true)
+    }
+    setError(null)
+
+    try {
+      const response = await fetch(`/api/picks?range=${range}&refresh=${forceRefresh}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (response.ok) {
+        const data: PicksResponse = await response.json()
+        setPicks(data.picks)
+        setMeta(data.meta)
+      } else {
+        const errorData = await response.json()
+        setError(errorData.detail || 'Erro ao carregar picks')
+      }
+    } catch (err) {
+      setError('Não consegui atualizar os picks agora. Tente novamente em instantes.')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
+  const handleRefresh = () => {
+    fetchPicks(activeTab, true)
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    setUser(null)
+    setIsAuthenticated(false)
+    window.location.href = '/'
+  }
+
+  const getConfidenceColor = (level: string) => {
+    switch (level) {
+      case 'ALTA': return 'text-green-400 bg-green-500/20'
+      case 'MÉDIA': return 'text-yellow-400 bg-yellow-500/20'
+      case 'BAIXA': return 'text-orange-400 bg-orange-500/20'
+      default: return 'text-gray-400 bg-gray-500/20'
+    }
+  }
+
+  const getConfidenceBarColor = (level: string) => {
+    switch (level) {
+      case 'ALTA': return 'bg-green-500'
+      case 'MÉDIA': return 'bg-yellow-500'
+      case 'BAIXA': return 'bg-orange-500'
+      default: return 'bg-gray-500'
+    }
+  }
+
+  // Loading state
+  if (loading && !refreshing) {
+    return (
+      <div className="min-h-screen bg-dark-bg flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-blue-400 animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Analisando jogos de hoje e amanhã…</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-dark-bg flex items-center justify-center p-4">
+        <div className="bg-dark-surface border border-dark-border rounded-2xl p-8 max-w-md w-full text-center">
+          <Shield className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h1 className="text-2xl font-bold mb-2">Acesso Restrito</h1>
+          <p className="text-gray-400 mb-6">Faça login para acessar os Picks Diários</p>
+          <Link href="/auth/login" className="btn-primary inline-flex items-center gap-2">
+            Fazer Login
+            <ChevronRight size={18} />
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  // Not Elite - Paywall
+  if (!isElite) {
+    return (
+      <div className="h-screen bg-dark-bg flex overflow-hidden">
+        {/* Sidebar */}
+        <Sidebar 
+          sidebarOpen={sidebarOpen} 
+          setSidebarOpen={setSidebarOpen} 
+          user={user} 
+          handleLogout={handleLogout}
+          activePage="picks"
+        />
+
+        {/* Main Content - Paywall */}
+        <div className="flex-1 flex flex-col h-screen overflow-hidden">
+          <header className="bg-dark-surface border-b border-dark-border p-4 flex-shrink-0">
+            <div className="flex items-center space-x-4">
+              <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-gray-400 hover:text-white">
+                <Menu size={24} />
+              </button>
+              <h1 className="text-xl font-semibold flex items-center gap-2">
+                <Target className="text-yellow-400" size={24} />
+                Picks Diários
+              </h1>
+            </div>
+          </header>
+
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className="bg-gradient-to-br from-yellow-500/10 to-orange-500/10 border border-yellow-500/30 rounded-2xl p-8 max-w-lg w-full text-center">
+              <div className="w-20 h-20 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Crown className="w-10 h-10 text-yellow-400" />
+              </div>
+              <h2 className="text-2xl font-bold mb-3">Recurso Exclusivo Elite</h2>
+              <p className="text-gray-400 mb-6">
+                Picks Diários é exclusivo do plano Elite. Faça upgrade para receber as melhores oportunidades automaticamente.
+              </p>
+              
+              <div className="bg-dark-bg/50 rounded-xl p-4 mb-6 text-left">
+                <h3 className="font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                  <Zap size={18} />
+                  O que você ganha:
+                </h3>
+                <ul className="space-y-2 text-sm text-gray-300">
+                  <li className="flex items-center gap-2">
+                    <span className="text-green-400">✓</span>
+                    Análise automática de 10+ jogos diários
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="text-green-400">✓</span>
+                    Picks com alta confiança baseados em dados
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="text-green-400">✓</span>
+                    Ligas principais: Brasil, Europa, Arábia Saudita
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="text-green-400">✓</span>
+                    Atualização automática todo dia
+                  </li>
+                </ul>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Link 
+                  href="/plans" 
+                  className="flex-1 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 text-black font-semibold py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2"
+                >
+                  <Crown size={18} />
+                  Ver Planos
+                </Link>
+                <Link 
+                  href="/" 
+                  className="flex-1 bg-dark-border hover:bg-gray-700 text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
+                >
+                  <MessageCircle size={18} />
+                  Voltar ao Chat
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Elite user - Show picks
+  return (
+    <div className="h-screen bg-dark-bg flex overflow-hidden">
+      {/* Sidebar */}
+      <Sidebar 
+        sidebarOpen={sidebarOpen} 
+        setSidebarOpen={setSidebarOpen} 
+        user={user} 
+        handleLogout={handleLogout}
+        activePage="picks"
+      />
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        {/* Header */}
+        <header className="bg-dark-surface border-b border-dark-border p-4 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-gray-400 hover:text-white">
+                <Menu size={24} />
+              </button>
+              <h1 className="text-xl font-semibold flex items-center gap-2">
+                <Target className="text-yellow-400" size={24} />
+                Picks Diários
+              </h1>
+              <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded-full font-medium">ELITE</span>
+            </div>
+            
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+            >
+              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? 'Atualizando...' : 'Atualizar'}
+            </button>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-2 mt-4">
+            {(['both', 'today', 'tomorrow'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === tab 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-dark-border text-gray-400 hover:text-white'
+                }`}
+              >
+                {tab === 'both' ? 'Hoje + Amanhã' : tab === 'today' ? 'Hoje' : 'Amanhã'}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
+          {/* Meta info */}
+          {meta && (
+            <div className="mb-4 text-xs text-gray-500 flex items-center gap-4">
+              <span className="flex items-center gap-1">
+                <Clock size={12} />
+                Atualizado: {new Date(meta.generated_at).toLocaleString('pt-BR')}
+              </span>
+              <span>{meta.analyzed_success} jogos analisados</span>
+            </div>
+          )}
+
+          {/* Error state */}
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6 flex items-center gap-3">
+              <AlertCircle className="text-red-400 flex-shrink-0" size={20} />
+              <p className="text-red-400">{error}</p>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!error && picks.length === 0 && !loading && (
+            <div className="text-center py-12">
+              <Target className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold mb-2">Sem jogos principais</h3>
+              <p className="text-gray-400">
+                Sem jogos principais para o período selecionado.
+              </p>
+            </div>
+          )}
+
+          {/* Picks Grid */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {picks.map((pick) => (
+              <div 
+                key={pick.fixture_id}
+                className="bg-dark-surface border border-dark-border rounded-xl p-4 hover:border-blue-500/30 transition-colors"
+              >
+                {/* Match Header */}
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="font-semibold text-white">
+                      {pick.home_team} <span className="text-gray-500">vs</span> {pick.away_team}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {pick.league} • {pick.date}
+                    </p>
+                  </div>
+                  {pick.picks.some(p => p.confidence >= 70) && (
+                    <span className="flex items-center gap-1 text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded-full">
+                      <TrendingUp size={12} />
+                      Value
+                    </span>
+                  )}
+                </div>
+
+                {/* Picks */}
+                <div className="space-y-3">
+                  {pick.picks.map((p, idx) => (
+                    <div key={idx} className="bg-dark-bg rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-blue-400">{p.market}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${getConfidenceColor(p.confidence_level)}`}>
+                          {p.confidence_level}
+                        </span>
+                      </div>
+                      
+                      {/* Confidence bar */}
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="flex-1 h-2 bg-dark-border rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full ${getConfidenceBarColor(p.confidence_level)} transition-all`}
+                            style={{ width: `${p.confidence}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-400 w-12 text-right">{p.confidence}%</span>
+                      </div>
+                      
+                      {/* Justification */}
+                      <p className="text-xs text-gray-400">{p.justification}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Footer */}
+                <div className="mt-3 pt-3 border-t border-dark-border">
+                  <p className="text-xs text-gray-600">
+                    Baseado em {pick.games_analyzed} jogos analisados
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Refreshing overlay */}
+          {refreshing && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-dark-surface border border-dark-border rounded-xl p-6 text-center">
+                <Loader2 className="w-8 h-8 text-blue-400 animate-spin mx-auto mb-3" />
+                <p className="text-gray-300">Analisando jogos de hoje e amanhã…</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Sidebar Component
+function Sidebar({ 
+  sidebarOpen, 
+  setSidebarOpen, 
+  user, 
+  handleLogout,
+  activePage 
+}: { 
+  sidebarOpen: boolean
+  setSidebarOpen: (open: boolean) => void
+  user: UserData | null
+  handleLogout: () => void
+  activePage: string
+}) {
+  return (
+    <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-50 w-64 bg-dark-surface border-r border-dark-border transition-transform duration-300 lg:translate-x-0 lg:static lg:inset-0`}>
+      <div className="flex items-center justify-between p-6 border-b border-dark-border">
+        <h2 className="text-xl font-bold text-accent-blue">BetStats</h2>
+        <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-gray-400 hover:text-white">
+          <X size={24} />
+        </button>
+      </div>
+      
+      <nav className="p-4 space-y-2">
+        <Link href="/" className={`flex items-center space-x-3 p-3 rounded-lg ${activePage === 'chat' ? 'bg-dark-border' : 'hover:bg-dark-border'} transition-colors`}>
+          <MessageCircle size={20} />
+          <span>Chat</span>
+        </Link>
+        <Link href="/picks" className={`flex items-center space-x-3 p-3 rounded-lg ${activePage === 'picks' ? 'bg-dark-border' : 'hover:bg-dark-border'} transition-colors`}>
+          <Target size={20} className="text-yellow-400" />
+          <span>Picks Diários</span>
+          <span className="ml-auto text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-medium">ELITE</span>
+        </Link>
+        <Link href="/dashboard" className={`flex items-center space-x-3 p-3 rounded-lg ${activePage === 'dashboard' ? 'bg-dark-border' : 'hover:bg-dark-border'} transition-colors`}>
+          <BarChart3 size={20} />
+          <span>Dashboard</span>
+        </Link>
+        <Link href="/plans" className={`flex items-center space-x-3 p-3 rounded-lg ${activePage === 'plans' ? 'bg-dark-border' : 'hover:bg-dark-border'} transition-colors`}>
+          <CreditCard size={20} />
+          <span>Planos</span>
+        </Link>
+        <Link href="/account" className={`flex items-center space-x-3 p-3 rounded-lg ${activePage === 'account' ? 'bg-dark-border' : 'hover:bg-dark-border'} transition-colors`}>
+          <User size={20} />
+          <span>Conta</span>
+        </Link>
+        <Link href="/ajuda" className={`flex items-center space-x-3 p-3 rounded-lg ${activePage === 'ajuda' ? 'bg-dark-border' : 'hover:bg-dark-border'} transition-colors`}>
+          <HelpCircle size={20} />
+          <span>Ajuda</span>
+        </Link>
+      </nav>
+      
+      <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-dark-border">
+        <div className="mb-4">
+          <p className="text-sm text-gray-400">{user?.email}</p>
+          {user?.subscription && (
+            <p className="text-xs text-accent-green">
+              Plano {user.subscription.plan} - {user.subscription.status}
+            </p>
+          )}
+        </div>
+        <button
+          onClick={handleLogout}
+          className="flex items-center space-x-3 p-3 rounded-lg hover:bg-dark-border transition-colors w-full"
+        >
+          <LogOut size={20} />
+          <span>Sair</span>
+        </button>
+      </div>
+    </div>
+  )
+}

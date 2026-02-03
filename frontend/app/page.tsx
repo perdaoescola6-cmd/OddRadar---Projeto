@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { MessageCircle, BarChart3, CreditCard, User, LogOut, Send, Menu, X } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { MessageCircle, BarChart3, CreditCard, User, LogOut, Send, Menu, X, Trash2, HelpCircle, Target } from 'lucide-react'
 import Link from 'next/link'
 
 interface Message {
@@ -28,6 +28,9 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [showClearModal, setShowClearModal] = useState(false)
+  const [showHelpTooltip, setShowHelpTooltip] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const quickSuggestions = [
     "Benfica x Porto",
@@ -39,6 +42,11 @@ export default function Home() {
   useEffect(() => {
     checkAuth()
   }, [])
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isLoading])
 
   const checkAuth = async () => {
     const token = localStorage.getItem('token')
@@ -161,40 +169,120 @@ export default function Home() {
     setMessages([])
   }
 
+  const handleClearChat = () => {
+    setMessages([])
+    localStorage.removeItem('chatHistory')
+    setShowClearModal(false)
+  }
+
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-dark-bg flex items-center justify-center p-4">
-        <div className="card max-w-md w-full">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-accent-blue mb-2">BetStats Trader</h1>
-            <p className="text-gray-400">Análise Premium de Apostas Esportivas</p>
+      <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+        {/* Animated Background */}
+        <div className="football-bg"></div>
+        <div className="grid-pattern"></div>
+        
+        {/* Floating Football Icons */}
+        <div className="football-icon">⚽</div>
+        <div className="football-icon">⚽</div>
+        <div className="football-icon">⚽</div>
+        <div className="football-icon">⚽</div>
+        <div className="football-icon">⚽</div>
+        
+        {/* Animated Gradient Orbs */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-green-500/10 rounded-full blur-3xl animate-pulse" style={{animationDelay: '1s'}}></div>
+        
+        {/* Main Card */}
+        <div className="glass-card max-w-md w-full p-8 relative z-10">
+          {/* Logo/Header */}
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-green-500 mb-6 shadow-lg shadow-blue-500/30">
+              <span className="text-4xl">⚽</span>
+            </div>
+            <h1 className="text-4xl font-bold text-gradient mb-3">BetStats Trader</h1>
+            <p className="text-gray-400 text-lg">Análise Premium de Apostas Esportivas</p>
           </div>
           
-          <div className="space-y-4">
-            <Link href="/auth/login" className="btn-primary w-full block text-center">
-              Entrar
+          {/* Buttons */}
+          <div className="space-y-4 mb-10">
+            <Link 
+              href="/auth/login" 
+              className="group relative w-full block text-center py-4 px-6 rounded-xl font-semibold text-white overflow-hidden transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-blue-500 transition-all duration-300 group-hover:from-blue-500 group-hover:to-blue-400"></div>
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-[radial-gradient(circle_at_50%_-20%,rgba(255,255,255,0.3),transparent_70%)]"></div>
+              <span className="relative flex items-center justify-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                </svg>
+                Entrar
+              </span>
             </Link>
-            <Link href="/auth/register" className="btn-secondary w-full block text-center">
-              Criar Conta
+            
+            <Link 
+              href="/auth/register" 
+              className="group relative w-full block text-center py-4 px-6 rounded-xl font-semibold text-white overflow-hidden transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] border border-gray-600/50 hover:border-green-500/50"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-gray-800/80 to-gray-700/80 transition-all duration-300 group-hover:from-green-600/20 group-hover:to-green-500/20"></div>
+              <span className="relative flex items-center justify-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                </svg>
+                Criar Conta Grátis
+              </span>
             </Link>
           </div>
           
-          <div className="mt-8 pt-6 border-t border-dark-border">
-            <h3 className="text-lg font-semibold mb-4">Planos Disponíveis</h3>
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span>Plus</span>
-                <span className="text-accent-green">R$30/mês</span>
+          {/* Plans Section */}
+          <div className="pt-8 border-t border-white/10">
+            <h3 className="text-lg font-semibold mb-6 text-center text-gray-300">
+              <span className="inline-flex items-center gap-2">
+                <svg className="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                </svg>
+                Planos Disponíveis
+              </span>
+            </h3>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                    <span className="text-blue-400 text-sm font-bold">P</span>
+                  </div>
+                  <span className="font-medium">Plus</span>
+                </div>
+                <span className="text-green-400 font-bold">R$30<span className="text-xs text-gray-500">/mês</span></span>
               </div>
-              <div className="flex justify-between">
-                <span>Pro</span>
-                <span className="text-accent-green">R$60/mês</span>
+              <div className="flex justify-between items-center p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors border border-yellow-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center">
+                    <span className="text-yellow-400 text-sm font-bold">⭐</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">Pro</span>
+                    <span className="ml-2 text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">Popular</span>
+                  </div>
+                </div>
+                <span className="text-green-400 font-bold">R$60<span className="text-xs text-gray-500">/mês</span></span>
               </div>
-              <div className="flex justify-between">
-                <span>Elite</span>
-                <span className="text-accent-green">R$100/mês</span>
+              <div className="flex justify-between items-center p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                    <span className="text-purple-400 text-sm font-bold">👑</span>
+                  </div>
+                  <span className="font-medium">Elite</span>
+                </div>
+                <span className="text-green-400 font-bold">R$100<span className="text-xs text-gray-500">/mês</span></span>
               </div>
             </div>
+          </div>
+          
+          {/* Footer */}
+          <div className="mt-8 text-center">
+            <p className="text-xs text-gray-500">
+              🔒 Pagamento seguro via Mercado Pago
+            </p>
           </div>
         </div>
       </div>
@@ -202,7 +290,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-dark-bg flex">
+    <div className="h-screen bg-dark-bg flex overflow-hidden">
       {/* Sidebar */}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-50 w-64 bg-dark-surface border-r border-dark-border transition-transform duration-300 lg:translate-x-0 lg:static lg:inset-0`}>
         <div className="flex items-center justify-between p-6 border-b border-dark-border">
@@ -216,9 +304,14 @@ export default function Home() {
         </div>
         
         <nav className="p-4 space-y-2">
-          <Link href="/chat" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-dark-border transition-colors">
+          <Link href="/" className="flex items-center space-x-3 p-3 rounded-lg bg-dark-border transition-colors">
             <MessageCircle size={20} />
             <span>Chat</span>
+          </Link>
+          <Link href="/picks" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-dark-border transition-colors">
+            <Target size={20} className="text-yellow-400" />
+            <span>Picks Diários</span>
+            <span className="ml-auto text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-medium">ELITE</span>
           </Link>
           <Link href="/dashboard" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-dark-border transition-colors">
             <BarChart3 size={20} />
@@ -231,6 +324,10 @@ export default function Home() {
           <Link href="/account" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-dark-border transition-colors">
             <User size={20} />
             <span>Conta</span>
+          </Link>
+          <Link href="/ajuda" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-dark-border transition-colors">
+            <HelpCircle size={20} />
+            <span>Ajuda</span>
           </Link>
         </nav>
         
@@ -253,19 +350,74 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:ml-0">
+      {/* Main Content - Fixed height, no page scroll */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Header */}
         <header className="bg-dark-surface border-b border-dark-border p-4">
           <div className="flex items-center justify-between">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden text-gray-400 hover:text-white"
-            >
-              <Menu size={24} />
-            </button>
-            <h1 className="text-xl font-semibold">Chat de Análises</h1>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden text-gray-400 hover:text-white"
+              >
+                <Menu size={24} />
+              </button>
+              <h1 className="text-xl font-semibold">Chat de Análises</h1>
+            </div>
+            <div className="flex items-center space-x-3">
+              {/* Help Button with Tooltip */}
+              <div className="relative">
+                <button
+                  onMouseEnter={() => setShowHelpTooltip(true)}
+                  onMouseLeave={() => setShowHelpTooltip(false)}
+                  className="flex items-center justify-center w-7 h-7 text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors"
+                >
+                  <HelpCircle size={16} />
+                </button>
+                
+                {/* Tooltip */}
+                {showHelpTooltip && (
+                  <div className="absolute right-0 top-full mt-2 w-72 p-4 bg-dark-surface border border-dark-border rounded-xl shadow-2xl z-50">
+                    <div className="absolute -top-2 right-4 w-4 h-4 bg-dark-surface border-l border-t border-dark-border transform rotate-45"></div>
+                    <h4 className="font-semibold text-blue-400 mb-2 text-sm">📖 Como pesquisar</h4>
+                    <ul className="text-xs text-gray-300 space-y-1.5">
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-400">•</span>
+                        <span>Use: <code className="bg-dark-border px-1 rounded">TimeA x TimeB</code> ou <code className="bg-dark-border px-1 rounded">vs</code></span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-400">•</span>
+                        <span>Ex.: <code className="bg-dark-border px-1 rounded">Arsenal x Chelsea</code></span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-blue-400">•</span>
+                        <span>Opcional: mercados (<code className="bg-dark-border px-1 rounded">over 2.5</code>, <code className="bg-dark-border px-1 rounded">btts sim</code>)</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-blue-400">•</span>
+                        <span>Opcional: odds (<code className="bg-dark-border px-1 rounded">@2.10</code>)</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-yellow-400">⚠️</span>
+                        <span>Se houver nomes parecidos, o bot pedirá confirmação</span>
+                      </li>
+                    </ul>
+                    <Link href="/ajuda" className="block mt-3 text-xs text-blue-400 hover:text-blue-300 font-medium">
+                      Ver ajuda completa →
+                    </Link>
+                  </div>
+                )}
+              </div>
+              
+              {messages.length > 0 && (
+                <button
+                  onClick={() => setShowClearModal(true)}
+                  className="flex items-center space-x-1 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                >
+                  <Trash2 size={14} />
+                  <span>Limpar</span>
+                </button>
+              )}
               {user?.subscription && (
                 <span className="badge badge-success">
                   {user.subscription.plan}
@@ -275,15 +427,15 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Chat Area */}
-        <div className="flex-1 flex flex-col p-4">
-          <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+        {/* Chat Area - Fixed height with internal scroll */}
+        <div className="flex-1 flex flex-col p-4 overflow-hidden" style={{ height: 'calc(100vh - 73px)' }}>
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2" style={{ scrollbarWidth: 'thin' }}>
             {messages.length === 0 ? (
               <div className="text-center py-12">
                 <MessageCircle size={48} className="mx-auto text-gray-500 mb-4" />
-                <h3 className="text-xl font-semibold mb-2">Bem-vindo ao BetStats Chat!</h3>
+                <h3 className="text-xl font-semibold mb-2">Sem mensagens ainda</h3>
                 <p className="text-gray-400 mb-6">
-                  Digite uma análise de jogo ou estatísticas de time para começar
+                  Digite um jogo para começar sua análise
                 </p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {quickSuggestions.map((suggestion, index) => (
@@ -301,10 +453,13 @@ export default function Home() {
               messages.map((message) => (
                 <div
                   key={message.id}
-                  className={`chat-message ${message.role === 'user' ? 'chat-user' : 'chat-assistant'}`}
+                  className={message.role === 'user' 
+                    ? 'ml-auto max-w-[80%] bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-3' 
+                    : 'chat-terminal max-w-[90%]'
+                  }
                 >
-                  <div className="whitespace-pre-wrap">{message.content}</div>
-                  <div className="text-xs opacity-70 mt-2">
+                  <div className="whitespace-pre-wrap font-mono text-sm">{message.content}</div>
+                  <div className={`text-xs mt-2 ${message.role === 'user' ? 'text-blue-200' : 'text-gray-500'}`}>
                     {message.timestamp.toLocaleTimeString()}
                   </div>
                 </div>
@@ -312,17 +467,24 @@ export default function Home() {
             )}
             
             {isLoading && (
-              <div className="chat-message chat-assistant">
-                <div className="flex items-center space-x-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-accent-blue"></div>
-                  <span>Analisando...</span>
+              <div className="chat-terminal max-w-[90%]">
+                <div className="flex items-center space-x-3">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
+                  </div>
+                  <span className="text-gray-400 font-mono text-sm">Analisando...</span>
                 </div>
               </div>
             )}
+            
+            {/* Scroll anchor */}
+            <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Area */}
-          <div className="flex space-x-2">
+          {/* Input Area - Always visible at bottom */}
+          <div className="flex space-x-2 pt-4 mt-auto flex-shrink-0">
             <input
               type="text"
               value={input}
@@ -342,6 +504,37 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* Clear Chat Modal */}
+      {showClearModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-surface border border-dark-border rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="text-center mb-6">
+              <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="text-red-400" size={24} />
+              </div>
+              <h3 className="text-lg font-semibold mb-2">Limpar histórico do chat?</h3>
+              <p className="text-gray-400 text-sm">
+                Isso apagará todas as mensagens deste dispositivo.
+              </p>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setShowClearModal(false)}
+                className="flex-1 py-2.5 px-4 rounded-lg bg-dark-border hover:bg-gray-700 text-white font-medium transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleClearChat}
+                className="flex-1 py-2.5 px-4 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium transition-colors"
+              >
+                Limpar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

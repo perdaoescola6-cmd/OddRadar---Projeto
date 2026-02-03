@@ -1,63 +1,657 @@
 from typing import Dict, List, Optional, Tuple
 import asyncio
+import re
 from datetime import datetime
-from .football_api import FootballAPI
-from .models import User, Subscription
+from football_api import FootballAPI
+from models import User, Subscription
 
 class ChatBot:
     def __init__(self):
         self.api = FootballAPI()
+        
+        # Market patterns for intelligent parsing
+        self.market_patterns = {
+            # Over patterns
+            r'(?:over|o|mais de|acima de|mais|acima)\s*(\d+[.,]?\d*)(?:\s*(?:gols?|goals?))?': lambda m: f"Over {m.group(1).replace(',', '.')} Gols",
+            r'\+(\d+[.,]?\d*)(?:\s*(?:gols?|goals?))?': lambda m: f"Over {m.group(1).replace(',', '.')} Gols",
+            # Under patterns
+            r'(?:under|u|menos de|abaixo de|menos|abaixo)\s*(\d+[.,]?\d*)(?:\s*(?:gols?|goals?))?': lambda m: f"Under {m.group(1).replace(',', '.')} Gols",
+            r'-(\d+[.,]?\d*)(?:\s*(?:gols?|goals?))?': lambda m: f"Under {m.group(1).replace(',', '.')} Gols",
+            # BTTS patterns
+            r'(?:btts|ambas?\s*(?:marcam?|marcarem?)|ambos?\s*(?:marcam?|marcarem?)|both\s*(?:teams?\s*)?(?:to\s*)?score)(?:\s*(?:sim|yes|s))?': lambda m: "Ambos Marcam (Sim)",
+            r'(?:btts|ambas?\s*(?:marcam?|marcarem?)|ambos?\s*(?:marcam?|marcarem?))(?:\s*(?:não|no|n))': lambda m: "Ambos Marcam (Não)",
+        }
+        
+        # Odd patterns
+        self.odd_patterns = [
+            r'@\s*(\d+[.,]\d+)',  # @2.10
+            r'odd[s]?\s*[:=]?\s*(\d+[.,]\d+)',  # odd: 2.10
+            r'(?:^|\s)(\d+[.,]\d{2})(?:\s|$)',  # 2.10 standalone
+        ]
+    
+    # Plan limits for feature-gating
+    PLAN_LIMITS = {
+        'free': 5,
+        'pro': 25,
+        'elite': 100
+    }
     
     async def process_message(self, user_input: str, user: User) -> str:
-        """Process user message and return response"""
+        """Process user message with intelligent interpretation"""
         try:
-            # Parse user input
-            parsed = await self.api.parse_user_input(user_input)
+            original_input = user_input.strip()
             
-            if parsed["intent"] == "match":
+            # ═══════════════════════════════════════════════════════════════
+            # 0. CHECK PLAN LIMITS (Feature-gating)
+            # ═══════════════════════════════════════════════════════════════
+            if not self._check_analysis_limit(user):
+                return self._format_limit_reached(user)
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 1. HANDLE COMMANDS
+            # ═══════════════════════════════════════════════════════════════
+            if original_input.lower() in ['/help', 'help', 'ajuda', '/ajuda', '?']:
+                return self._format_help()
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 2. PARSE INPUT - Extract teams, markets, and odds
+            # ═══════════════════════════════════════════════════════════════
+            parsed = self._intelligent_parse(original_input)
+            
+            teams_text = parsed.get("teams_text", "")
+            markets = parsed.get("markets", [])
+            odds = parsed.get("odds", [])
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 3. IDENTIFY TEAMS - Try multiple methods
+            # ═══════════════════════════════════════════════════════════════
+            teams = []
+            ambiguous = False
+            
+            # Method 1: Direct regex extraction from cleaned text
+            if teams_text:
+                extracted = self._extract_teams_from_text(teams_text)
+                if extracted:
+                    teams = extracted
+            
+            # Method 2: Try LLM if direct extraction failed
+            if not teams:
+                try:
+                    text_for_llm = teams_text if teams_text else original_input
+                    llm_result = await self.api.translate_team_name_with_llm(text_for_llm)
+                    teams = llm_result.get("teams", [])
+                    ambiguous = llm_result.get("ambiguous", False)
+                    
+                    if ambiguous:
+                        options = llm_result.get("options", [])
+                        question = llm_result.get("question", "Qual time você quer dizer?")
+                        return self._format_disambiguation_question(question, options)
+                except Exception as e:
+                    pass  # Continue to fallback
+            
+            # Method 3: Fallback - extract from original input
+            if not teams:
+                extracted = self._extract_teams_from_text(original_input)
+                if extracted:
+                    teams = extracted
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 4. HANDLE DIFFERENT SCENARIOS
+            # ═══════════════════════════════════════════════════════════════
+            
+            # Standard match analysis (with or without markets/odds)
+            if len(teams) >= 2:
+                parsed = {
+                    "intent": "match",
+                    "team_a": teams[0],
+                    "team_b": teams[1],
+                    "n": 10,
+                    "split_mode": "A_HOME_B_AWAY",
+                    "markets": markets,
+                    "odds": odds
+                }
                 return await self._analyze_match(parsed, user)
-            else:
+            
+            # Single team analysis
+            elif len(teams) >= 1:
+                parsed = {
+                    "intent": "team",
+                    "team": teams[0],
+                    "n": 10,
+                    "home_away": "all",
+                    "metrics": ["over_2_5", "btts", "win_rate", "over_1_5", "clean_sheet_rate"]
+                }
                 return await self._analyze_team(parsed, user)
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 5. FRIENDLY FALLBACK - Never show cold error
+            # ═══════════════════════════════════════════════════════════════
+            return self._format_friendly_fallback(original_input)
                 
         except Exception as e:
-            return f"❌ Erro ao processar sua solicitação. Por favor, tente novamente.\n\nDetalhes: {str(e)}"
+            return self._format_friendly_fallback(str(e))
+    
+    def _extract_teams_from_text(self, text: str) -> List[str]:
+        """Extract team names directly from text using robust regex patterns"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        teams = []
+        original_text = text.strip()
+        text_lower = text.lower().strip()
+        
+        logger.info(f"[PARSE] Input: '{original_text}'")
+        
+        # Known team aliases for direct matching (comprehensive list)
+        known_teams = {
+            # England
+            "chelsea": "Chelsea", "arsenal": "Arsenal", "liverpool": "Liverpool",
+            "manchester united": "Manchester United", "man united": "Manchester United", "man utd": "Manchester United",
+            "manchester city": "Manchester City", "man city": "Manchester City",
+            "tottenham": "Tottenham", "spurs": "Tottenham",
+            "newcastle": "Newcastle", "west ham": "West Ham", "aston villa": "Aston Villa",
+            "everton": "Everton", "wolves": "Wolves", "brighton": "Brighton",
+            "crystal palace": "Crystal Palace", "fulham": "Fulham", "brentford": "Brentford",
+            "bournemouth": "Bournemouth", "nottingham": "Nottingham Forest",
+            "leicester": "Leicester", "leeds": "Leeds", "southampton": "Southampton",
+            # Portugal
+            "benfica": "Benfica", "porto": "FC Porto", "fc porto": "FC Porto",
+            "sporting": "Sporting CP", "braga": "SC Braga",
+            # Spain
+            "real madrid": "Real Madrid", "barcelona": "Barcelona", "barca": "Barcelona",
+            "atletico madrid": "Atletico Madrid", "atletico": "Atletico Madrid",
+            "sevilla": "Sevilla", "valencia": "Valencia", "villarreal": "Villarreal",
+            "betis": "Real Betis", "athletic bilbao": "Athletic Club", "bilbao": "Athletic Club",
+            "sociedad": "Real Sociedad", "real sociedad": "Real Sociedad",
+            # Germany - Bundesliga
+            "bayern": "Bayern Munich", "bayern munich": "Bayern Munich", "bayern munchen": "Bayern Munich",
+            "dortmund": "Borussia Dortmund", "borussia dortmund": "Borussia Dortmund", "bvb": "Borussia Dortmund",
+            "leverkusen": "Bayer Leverkusen", "bayer leverkusen": "Bayer Leverkusen", "bayer": "Bayer Leverkusen",
+            "rb leipzig": "RB Leipzig", "leipzig": "RB Leipzig",
+            "frankfurt": "Eintracht Frankfurt", "eintracht frankfurt": "Eintracht Frankfurt",
+            "wolfsburg": "VfL Wolfsburg", "freiburg": "SC Freiburg",
+            "hoffenheim": "Hoffenheim", "mainz": "Mainz 05",
+            "augsburg": "Augsburg", "werder bremen": "Werder Bremen", "bremen": "Werder Bremen",
+            "monchengladbach": "Borussia Monchengladbach", "gladbach": "Borussia Monchengladbach",
+            "union berlin": "Union Berlin", "koln": "FC Koln", "cologne": "FC Koln",
+            "st. pauli": "FC St. Pauli", "st pauli": "FC St. Pauli", "fc st. pauli": "FC St. Pauli", "fc st pauli": "FC St. Pauli",
+            "hamburg": "Hamburger SV", "schalke": "Schalke 04",
+            "stuttgart": "VfB Stuttgart", "heidenheim": "Heidenheim",
+            "bochum": "VfL Bochum", "darmstadt": "Darmstadt 98",
+            # Italy
+            "juventus": "Juventus", "milan": "AC Milan", "ac milan": "AC Milan",
+            "inter": "Inter", "inter milan": "Inter", "napoli": "Napoli",
+            "roma": "AS Roma", "lazio": "Lazio",
+            "bologna": "Bologna", "fiorentina": "Fiorentina", "atalanta": "Atalanta",
+            "torino": "Torino", "udinese": "Udinese", "sassuolo": "Sassuolo",
+            "monza": "Monza", "empoli": "Empoli", "lecce": "Lecce",
+            "cagliari": "Cagliari", "verona": "Verona", "genoa": "Genoa",
+            # France
+            "psg": "Paris Saint Germain", "paris saint germain": "Paris Saint Germain",
+            "marseille": "Marseille", "lyon": "Lyon", "monaco": "Monaco", "lille": "Lille",
+            "nice": "Nice", "lens": "Lens", "rennes": "Rennes",
+            # Brazil
+            "flamengo": "Flamengo", "palmeiras": "Palmeiras", "corinthians": "Corinthians",
+            "sao paulo": "Sao Paulo", "santos": "Santos", "gremio": "Gremio",
+            "internacional": "Internacional", "cruzeiro": "Cruzeiro",
+            "botafogo": "Botafogo", "fluminense": "Fluminense", "vasco": "Vasco DA Gama",
+            # Netherlands
+            "ajax": "Ajax", "feyenoord": "Feyenoord", "psv": "PSV Eindhoven",
+            # Scotland
+            "celtic": "Celtic", "rangers": "Rangers",
+        }
+        
+        # ROBUST SEPARATORS: x, vs, versus, × (NOT hyphen - it's used in team names like Al-Khaleej)
+        # Pattern captures: anything before separator, separator, anything after
+        separators = r'\s+(?:x|vs\.?|versus|v\.?|×)\s+'
+        
+        # Try to split by separator first (most reliable)
+        parts = re.split(separators, text_lower, maxsplit=1, flags=re.IGNORECASE)
+        
+        if len(parts) >= 2:
+            team_a_raw = parts[0].strip()
+            team_b_raw = parts[1].strip()
+            
+            # Clean team B from trailing market/odds info
+            # Remove common suffixes: over, under, btts, @, numbers at end
+            team_b_raw = re.sub(r'\s+(?:over|under|o|u)\s*\d.*$', '', team_b_raw, flags=re.IGNORECASE)
+            team_b_raw = re.sub(r'\s+btts.*$', '', team_b_raw, flags=re.IGNORECASE)
+            team_b_raw = re.sub(r'\s+ambas?.*$', '', team_b_raw, flags=re.IGNORECASE)
+            team_b_raw = re.sub(r'\s*@.*$', '', team_b_raw)
+            team_b_raw = re.sub(r'\s+\d+[.,]\d+.*$', '', team_b_raw)
+            team_b_raw = team_b_raw.strip()
+            
+            logger.info(f"[PARSE] Split result: team_a='{team_a_raw}', team_b='{team_b_raw}'")
+            
+            # Resolve team names
+            team_a = self._resolve_team_alias(team_a_raw, known_teams)
+            team_b = self._resolve_team_alias(team_b_raw, known_teams)
+            
+            if team_a and team_b:
+                teams = [team_a, team_b]
+                logger.info(f"[PARSE] Resolved: {teams}")
+        
+        return teams
+    
+    def _resolve_team_alias(self, raw_name: str, known_teams: dict) -> str:
+        """Resolve a raw team name to its official name using aliases"""
+        raw_lower = raw_name.lower().strip()
+        
+        # Direct match
+        if raw_lower in known_teams:
+            return known_teams[raw_lower]
+        
+        # Partial match (alias contains raw or raw contains alias)
+        for alias, official in known_teams.items():
+            if alias == raw_lower or raw_lower == alias:
+                return official
+            # Check if raw is a substring of alias or vice versa
+            if len(raw_lower) >= 3:
+                if raw_lower in alias or alias in raw_lower:
+                    return official
+        
+        # No match found - return title case of raw name
+        return raw_name.title()
+    
+    def _intelligent_parse(self, user_input: str) -> Dict:
+        """Intelligently parse user input to extract teams, markets, and odds"""
+        result = {
+            "teams_text": "",
+            "markets": [],
+            "odds": []
+        }
+        
+        text = user_input.lower().strip()
+        
+        # Extract odds first (they're easy to identify)
+        for pattern in self.odd_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                odd_value = match.replace(',', '.')
+                try:
+                    if 1.01 <= float(odd_value) <= 100:  # Valid odd range
+                        result["odds"].append(odd_value)
+                except:
+                    pass
+        
+        # Extract markets
+        for pattern, formatter in self.market_patterns.items():
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                market = formatter(match)
+                if market not in result["markets"]:
+                    result["markets"].append(market)
+        
+        # Clean text to extract teams - be aggressive
+        teams_text = text
+        
+        # Remove odds patterns
+        teams_text = re.sub(r'@\s*\d+[.,]\d+', ' ', teams_text)
+        teams_text = re.sub(r'odd[s]?\s*[:=]?\s*\d+[.,]\d+', ' ', teams_text)
+        teams_text = re.sub(r'(?:^|\s)\d+[.,]\d{2}(?:\s|$)', ' ', teams_text)
+        
+        # Remove market keywords - comprehensive list
+        market_keywords = [
+            r'\bover\s*\d+[.,]?\d*', r'\bo\d+[.,]?\d*', r'\+\d+[.,]?\d*',
+            r'\bunder\s*\d+[.,]?\d*', r'\bu\d+[.,]?\d*', r'-\d+[.,]?\d*',
+            r'\bbtts\b', r'\bambas?\s*marcam?\b', r'\bambos?\s*marcam?\b',
+            r'\bboth\s*teams?\s*(?:to\s*)?score\b',
+            r'\bgols?\b', r'\bgoals?\b',
+            r'\bsim\b', r'\byes\b', r'\bnão\b', r'\bno\b',
+            r'\bmais\s*de\b', r'\bmenos\s*de\b', r'\bacima\s*de\b', r'\babaixo\s*de\b',
+        ]
+        for kw in market_keywords:
+            teams_text = re.sub(kw, ' ', teams_text, flags=re.IGNORECASE)
+        
+        # Remove connectors and noise
+        teams_text = re.sub(r'\s+e\s+', ' ', teams_text)
+        teams_text = re.sub(r'\s+\+\s+', ' ', teams_text)
+        teams_text = re.sub(r'\s+com\s+', ' ', teams_text)
+        teams_text = re.sub(r'\s+and\s+', ' ', teams_text)
+        
+        # Clean up multiple spaces and trim
+        teams_text = re.sub(r'\s+', ' ', teams_text).strip()
+        
+        # Keep the original text - the separator pattern will be handled by _extract_teams_from_text
+        result["teams_text"] = teams_text
+        
+        return result
+    
+    def _format_help(self) -> str:
+        """Format help message"""
+        lines = []
+        lines.append("📌 Como usar o BetStats Trader")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append("")
+        lines.append("📊 Análise de jogo:")
+        lines.append("  Chelsea vs Arsenal")
+        lines.append("  Benfica x Porto")
+        lines.append("  Flamengo - Palmeiras")
+        lines.append("")
+        lines.append("🎯 Com mercados específicos:")
+        lines.append("  Chelsea x Arsenal over 2.5")
+        lines.append("  Benfica vs Porto btts sim")
+        lines.append("  Real Madrid x Barcelona o2.5 + btts")
+        lines.append("")
+        lines.append("💰 Com odds:")
+        lines.append("  Chelsea x Arsenal o2.5 @2.10")
+        lines.append("  Benfica vs Porto btts sim @1.85")
+        lines.append("")
+        lines.append("📈 Estatísticas de time:")
+        lines.append("  Chelsea stats")
+        lines.append("  Estatísticas do Benfica")
+        lines.append("")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append("💡 Dica: Pode escrever de forma informal, eu entendo!")
+        return "\n".join(lines)
+    
+    def _format_bet_confirmation(self, teams: List[str], markets: List[str], odds: List[str]) -> str:
+        """Format bet confirmation when user provides markets/odds"""
+        lines = []
+        lines.append(f"⚽ {teams[0]} vs {teams[1]}")
+        lines.append("")
+        
+        if markets:
+            lines.append(f"🎯 Mercados: {' + '.join(markets)}")
+        
+        if odds:
+            lines.append(f"💰 Odd informada: {', '.join(odds)}")
+        
+        lines.append("")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append("")
+        lines.append("O que você quer fazer?")
+        lines.append("  1. Digite 'analisar' para ver a análise completa")
+        lines.append("  2. Digite 'validar' para verificar se a odd tem valor")
+        lines.append("")
+        lines.append("Ou simplesmente digite o jogo sem mercados para análise:")
+        lines.append(f"  {teams[0]} vs {teams[1]}")
+        
+        return "\n".join(lines)
+    
+    def _format_friendly_fallback(self, original_input: str) -> str:
+        """Format friendly fallback when we can't understand the input"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[FALLBACK] Could not process: '{original_input}'")
+        
+        lines = []
+        text_lower = original_input.lower().strip()
+        
+        # Check if it looks like a match query
+        has_separator = any(sep in text_lower for sep in [' x ', ' vs ', ' v ', ' - ', '×'])
+        
+        if has_separator:
+            # User tried to input a match but we couldn't find the teams
+            lines.append("🔍 Não encontrei esse jogo com segurança.")
+            lines.append("")
+            lines.append("Verifique se os nomes dos times estão corretos.")
+            lines.append("")
+            lines.append("💡 Dica: Use o nome completo do time:")
+            lines.append("  • Arsenal x Chelsea ✓")
+            lines.append("  • Man United vs Liverpool ✓")
+            lines.append("  • Benfica x Porto ✓")
+        else:
+            # User input doesn't look like a match
+            lines.append("🤔 Não entendi sua mensagem.")
+            lines.append("")
+            lines.append("Para analisar um jogo, use o formato:")
+            lines.append("  • Time A x Time B")
+            lines.append("  • Time A vs Time B")
+            lines.append("")
+            lines.append("💡 Exemplos:")
+            lines.append("  • Chelsea vs Arsenal")
+            lines.append("  • Benfica x Porto over 2.5 @1.90")
+            lines.append("  • Flamengo vs Palmeiras btts")
+        
+        lines.append("")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append("Digite /help para ver todos os comandos disponíveis.")
+        
+        return "\n".join(lines)
+    
+    def _format_error(self, message: str) -> str:
+        """Format error message - clean professional style"""
+        lines = []
+        lines.append("┌─────────────────────────────────────────────────────────┐")
+        lines.append("│  ERROR                                                  │")
+        lines.append("├─────────────────────────────────────────────────────────┤")
+        lines.append(f"│  {message[:55]:<55} │")
+        lines.append("│                                                         │")
+        lines.append("│  Examples:                                              │")
+        lines.append("│    - Benfica vs Porto                                   │")
+        lines.append("│    - Flamengo vs Palmeiras                              │")
+        lines.append("│    - Chelsea stats                                      │")
+        lines.append("└─────────────────────────────────────────────────────────┘")
+        return "\n".join(lines)
+    
+    def _format_disambiguation_question(self, question: str, options: list) -> str:
+        """Format disambiguation question - clean professional style"""
+        lines = []
+        lines.append("┌─────────────────────────────────────────────────────────┐")
+        lines.append("│  CLARIFICATION REQUIRED                                 │")
+        lines.append("├─────────────────────────────────────────────────────────┤")
+        lines.append(f"│  {question:<55} │")
+        lines.append("│                                                         │")
+        lines.append("│  Available options:                                     │")
+        for i, option in enumerate(options, 1):
+            lines.append(f"│    {i}. {option:<51} │")
+        lines.append("│                                                         │")
+        lines.append("│  Please type the full team name to continue.            │")
+        lines.append("└─────────────────────────────────────────────────────────┘")
+        return "\n".join(lines)
     
     async def _analyze_match(self, parsed: Dict, user: User) -> str:
-        """Analyze match between two teams"""
+        """Analyze match between two teams with strict data validation"""
         team_a_name = parsed["team_a"]
         team_b_name = parsed["team_b"]
-        n = parsed.get("n", 10)
-        split_mode = parsed.get("split_mode", "A_HOME_B_AWAY")
+        REQUIRED_GAMES = 10  # FIXED: Always 10 games per team
+        markets = parsed.get("markets", [])
+        odds = parsed.get("odds", [])
         
-        # Resolve teams
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 1: RESOLVE TEAMS
+        # ═══════════════════════════════════════════════════════════════
         team_a = await self.api.resolve_team(team_a_name)
         if not team_a:
-            return f"❌ Time '{team_a_name}' não encontrado. Verifique a digitação."
+            return self._format_friendly_fallback(f"{team_a_name} vs {team_b_name}")
         
         team_b = await self.api.resolve_team(team_b_name, context_fixtures=[])
         if not team_b:
-            return f"❌ Time '{team_b_name}' não encontrado. Verifique a digitação."
+            return self._format_friendly_fallback(f"{team_a_name} vs {team_b_name}")
         
-        # Get fixtures for both teams
-        fixtures_a = await self.api.get_team_fixtures(team_a["id"], n * 2)  # Get more for filtering
-        fixtures_b = await self.api.get_team_fixtures(team_b["id"], n * 2)
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 2: FETCH FIXTURES (get extra for filtering)
+        # ═══════════════════════════════════════════════════════════════
+        fixtures_a_raw = await self.api.get_team_fixtures(team_a["id"], REQUIRED_GAMES * 3)
+        fixtures_b_raw = await self.api.get_team_fixtures(team_b["id"], REQUIRED_GAMES * 3)
         
-        # Filter fixtures based on split mode
-        filtered_a = self._filter_fixtures_by_venue(fixtures_a, team_a["id"], "home" if split_mode == "A_HOME_B_AWAY" else "all")
-        filtered_b = self._filter_fixtures_by_venue(fixtures_b, team_b["id"], "away" if split_mode == "A_HOME_B_AWAY" else "all")
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 3: VALIDATE AND FILTER FIXTURES
+        # ═══════════════════════════════════════════════════════════════
+        validated_a = self._validate_fixtures(fixtures_a_raw, team_a["id"], REQUIRED_GAMES)
+        validated_b = self._validate_fixtures(fixtures_b_raw, team_b["id"], REQUIRED_GAMES)
         
-        # Take last N from each
-        filtered_a = filtered_a[-n:]
-        filtered_b = filtered_b[-n:]
+        # Check if we have enough valid data
+        if not validated_a["valid"] or not validated_b["valid"]:
+            return self._format_data_error(team_a["name"], team_b["name"], validated_a, validated_b)
         
-        if len(filtered_a) < 5 or len(filtered_b) < 5:
-            # Fallback to all fixtures if insufficient sample
-            filtered_a = fixtures_a[-n:]
-            filtered_b = fixtures_b[-n:]
-            split_mode = "ALL"
+        filtered_a = validated_a["fixtures"]
+        filtered_b = validated_b["fixtures"]
         
-        # Generate analysis
-        return self._generate_match_analysis(team_a, team_b, filtered_a, filtered_b, split_mode)
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 4: GENERATE ANALYSIS WITH VERIFIED DATA
+        # ═══════════════════════════════════════════════════════════════
+        return self._generate_match_analysis(
+            team_a, team_b, 
+            filtered_a, filtered_b, 
+            "LAST_10",  # Always last 10 games
+            markets, odds,
+            validated_a["date_range"], validated_b["date_range"]
+        )
+    
+    def _validate_fixtures(self, fixtures: List[Dict], team_id: int, required: int) -> Dict:
+        """Validate fixtures - ensure data quality before analysis
+        
+        Pipeline "Last 20 Verified":
+        1. Filter only official matches (exclude friendlies, charity, test matches)
+        2. Validate date, score, teams
+        3. Sort by date (most recent first)
+        4. Take exactly required number
+        """
+        from datetime import datetime
+        
+        result = {
+            "valid": False,
+            "fixtures": [],
+            "errors": [],
+            "date_range": {"start": None, "end": None},
+            "excluded_friendlies": 0
+        }
+        
+        if not fixtures:
+            result["errors"].append("Nenhum jogo encontrado")
+            return result
+        
+        # Keywords to identify non-official matches
+        FRIENDLY_KEYWORDS = [
+            "friendly", "amistoso", "charity", "beneficente", "test match",
+            "exhibition", "testimonial", "memorial", "trophy friendly",
+            "pre-season", "pre season", "preseason", "club friendly"
+        ]
+        
+        # Competition types to exclude
+        EXCLUDED_TYPES = ["friendly", "club friendly", "international friendly"]
+        
+        valid_fixtures = []
+        seen_ids = set()
+        excluded_count = 0
+        
+        for fixture in fixtures:
+            fixture_data = fixture.get("fixture", {})
+            fixture_id = fixture_data.get("id")
+            fixture_date = fixture_data.get("date")
+            fixture_status = fixture_data.get("status", {}).get("short", "")
+            goals = fixture.get("goals", {})
+            teams = fixture.get("teams", {})
+            league = fixture.get("league", {})
+            
+            # ═══════════════════════════════════════════════════════════════
+            # VALIDATION 1: Check for duplicates
+            # ═══════════════════════════════════════════════════════════════
+            if fixture_id in seen_ids:
+                continue
+            seen_ids.add(fixture_id)
+            
+            # ═══════════════════════════════════════════════════════════════
+            # VALIDATION 2: Filter out friendlies and non-official matches
+            # ═══════════════════════════════════════════════════════════════
+            league_name = league.get("name", "").lower()
+            league_type = league.get("type", "").lower()
+            
+            # Check if it's a friendly by league type
+            if league_type in EXCLUDED_TYPES:
+                excluded_count += 1
+                continue
+            
+            # Check if it's a friendly by league name
+            is_friendly = any(keyword in league_name for keyword in FRIENDLY_KEYWORDS)
+            if is_friendly:
+                excluded_count += 1
+                continue
+            
+            # ═══════════════════════════════════════════════════════════════
+            # VALIDATION 3: Check date is valid and not in future
+            # ═══════════════════════════════════════════════════════════════
+            if not fixture_date:
+                continue
+            
+            try:
+                game_date = datetime.fromisoformat(fixture_date.replace("Z", "+00:00"))
+                if game_date > datetime.now(game_date.tzinfo):
+                    continue  # Skip future games
+            except:
+                continue
+            
+            # ═══════════════════════════════════════════════════════════════
+            # VALIDATION 4: Check game is finished
+            # ═══════════════════════════════════════════════════════════════
+            if fixture_status not in ["FT", "AET", "PEN"]:
+                continue  # Skip unfinished games
+            
+            # ═══════════════════════════════════════════════════════════════
+            # VALIDATION 5: Check goals are valid
+            # ═══════════════════════════════════════════════════════════════
+            home_goals = goals.get("home")
+            away_goals = goals.get("away")
+            if home_goals is None or away_goals is None:
+                continue  # Skip games without score
+            
+            # ═══════════════════════════════════════════════════════════════
+            # VALIDATION 6: Check teams are valid
+            # ═══════════════════════════════════════════════════════════════
+            home_team = teams.get("home", {})
+            away_team = teams.get("away", {})
+            if not home_team.get("id") or not away_team.get("id"):
+                continue
+            
+            # Passed all validations - this is an official match
+            valid_fixtures.append(fixture)
+        
+        result["excluded_friendlies"] = excluded_count
+        
+        # Sort by date (most recent first)
+        valid_fixtures.sort(
+            key=lambda x: x.get("fixture", {}).get("date", ""),
+            reverse=True
+        )
+        
+        # Take exactly the required number
+        final_fixtures = valid_fixtures[:required]
+        
+        if len(final_fixtures) < required:
+            result["errors"].append(f"Apenas {len(final_fixtures)} jogos válidos encontrados (necessário: {required})")
+            # Still allow analysis with fewer games if we have at least 5
+            if len(final_fixtures) >= 5:
+                result["valid"] = True
+                result["fixtures"] = final_fixtures
+        else:
+            result["valid"] = True
+            result["fixtures"] = final_fixtures
+        
+        # Calculate date range
+        if final_fixtures:
+            dates = []
+            for f in final_fixtures:
+                try:
+                    d = datetime.fromisoformat(f.get("fixture", {}).get("date", "").replace("Z", "+00:00"))
+                    dates.append(d)
+                except:
+                    pass
+            if dates:
+                result["date_range"]["start"] = min(dates).strftime("%d/%m/%Y")
+                result["date_range"]["end"] = max(dates).strftime("%d/%m/%Y")
+        
+        return result
+    
+    def _format_data_error(self, team_a: str, team_b: str, val_a: Dict, val_b: Dict) -> str:
+        """Format error message when data validation fails"""
+        lines = []
+        lines.append("⚠️ Dados Insuficientes")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append("")
+        lines.append(f"Não foi possível obter dados suficientes para análise.")
+        lines.append("")
+        
+        if val_a["errors"]:
+            lines.append(f"  {team_a}: {', '.join(val_a['errors'])}")
+        if val_b["errors"]:
+            lines.append(f"  {team_b}: {', '.join(val_b['errors'])}")
+        
+        lines.append("")
+        lines.append("💡 Tente novamente em alguns minutos ou verifique os nomes dos times.")
+        
+        return "\n".join(lines)
     
     async def _analyze_team(self, parsed: Dict, user: User) -> str:
         """Analyze team statistics"""
@@ -96,134 +690,389 @@ class ChatBot:
         
         return filtered
     
-    def _generate_match_analysis(self, team_a: Dict, team_b: Dict, fixtures_a: List[Dict], fixtures_b: List[Dict], split_mode: str) -> str:
-        """Generate premium match analysis"""
-        # Calculate statistics for both teams
+    def _generate_match_analysis(self, team_a: Dict, team_b: Dict, fixtures_a: List[Dict], fixtures_b: List[Dict], split_mode: str, markets: List[str] = None, odds: List[str] = None, date_range_a: Dict = None, date_range_b: Dict = None) -> str:
+        """Generate premium match analysis - Bloomberg/TradingView style"""
+        from datetime import datetime
+        
+        markets = markets or []
+        odds = odds or []
+        date_range_a = date_range_a or {}
+        date_range_b = date_range_b or {}
+        
+        # Calculate statistics
         stats_a = self._calculate_team_stats(fixtures_a, team_a["id"])
         stats_b = self._calculate_team_stats(fixtures_b, team_b["id"])
         
-        # Generate response
-        response = []
-        response.append(f"⚽ **{team_a['name']} x {team_b['name']}**")
-        response.append(f"📊 Amostra: {len(fixtures_a)} jogos ({team_a['name']}) + {len(fixtures_b)} jogos ({team_b['name']})")
-        response.append(f"🏠 Modo: {split_mode}")
-        response.append("")
+        # Build premium output
+        lines = []
         
-        # Recent form
-        response.append("📈 **FORMA RECENTE**")
-        response.append(f"{team_a['name']}: {self._get_form_string(fixtures_a[-4:], team_a['id'])}")
-        response.append(f"{team_b['name']}: {self._get_form_string(fixtures_b[-4:], team_b['id'])}")
-        response.append("")
+        # ═══════════════════════════════════════════════════════════════
+        # DATA VERIFICATION BLOCK - Premium confirmation
+        # ═══════════════════════════════════════════════════════════════
+        lines.append("✅ Dados verificados: últimos 10 jogos de cada equipe")
+        if date_range_a.get("start") and date_range_b.get("start"):
+            lines.append(f"   Período: {date_range_a.get('end', '')} a {date_range_a.get('start', '')} | {date_range_b.get('end', '')} a {date_range_b.get('start', '')}")
+        lines.append("")
         
-        # Full-time stats
-        response.append("⏱️ **ESTATÍSTICAS TEMPO INTEGRAL**")
-        response.append(f"🎯 Over 2.5: {stats_a['over_2_5']:.1f}% vs {stats_b['over_2_5']:.1f}%")
-        response.append(f"🤝 BTTS: {stats_a['btts']:.1f}% vs {stats_b['btts']:.1f}%")
-        response.append(f"⚽ Média gols: {stats_a['avg_total_goals']:.1f} vs {stats_b['avg_total_goals']:.1f}")
-        response.append("")
+        # ═══════════════════════════════════════════════════════════════
+        # HEADER - Casual, humano e elegante
+        # ═══════════════════════════════════════════════════════════════
+        lines.append(f"⚽ {team_a['name']} vs {team_b['name']}")
+        lines.append(f"📊 Baseado nos últimos {len(fixtures_a)} jogos de cada equipe")
         
-        # Half-time stats
-        response.append("⏰ **ESTATÍSTICAS 1º TEMPO**")
-        ht_stats_a = self._calculate_ht_stats(fixtures_a, team_a["id"])
-        ht_stats_b = self._calculate_ht_stats(fixtures_b, team_b["id"])
-        response.append(f"🎯 HT Over 0.5: {ht_stats_a['ht_over_0_5']:.1f}% vs {ht_stats_b['ht_over_0_5']:.1f}%")
-        response.append(f"🎯 HT Over 1.5: {ht_stats_a['ht_over_1_5']:.1f}% vs {ht_stats_b['ht_over_1_5']:.1f}%")
-        response.append("")
+        # Show user's markets and odds if provided
+        if markets or odds:
+            lines.append("")
+            if markets:
+                lines.append(f"🎯 Seu mercado: {' + '.join(markets)}")
+            if odds:
+                lines.append(f"💰 Odd informada: {', '.join(odds)}")
         
-        # Advanced stats (corners/cards)
-        corners_a, cards_a = self._calculate_advanced_stats(fixtures_a)
-        corners_b, cards_b = self._calculate_advanced_stats(fixtures_b)
+        lines.append("")
         
-        if corners_a['sample'] > 0 and corners_b['sample'] > 0:
-            response.append("🚩 **ESCANTEIOS**")
-            response.append(f"📊 Média: {corners_a['avg']:.1f} vs {corners_b['avg']:.1f}")
-            response.append(f"🎯 Over 8.5: {corners_a['over_8_5']:.1f}% vs {corners_b['over_8_5']:.1f}%")
-            response.append(f"🎯 Over 9.5: {corners_a['over_9_5']:.1f}% vs {corners_b['over_9_5']:.1f}%")
-            response.append(f"🎯 Over 10.5: {corners_a['over_10_5']:.1f}% vs {corners_b['over_10_5']:.1f}%")
-            response.append("")
+        # ═══════════════════════════════════════════════════════════════
+        # FORM SECTION - Use first 5 (most recent) since list is sorted newest first
+        # ═══════════════════════════════════════════════════════════════
+        form_a = self._get_form_string(fixtures_a[:5], team_a['id'])
+        form_b = self._get_form_string(fixtures_b[:5], team_b['id'])
         
-        if cards_a['sample'] > 0 and cards_b['sample'] > 0:
-            response.append("🟨 **CARTÕES**")
-            response.append(f"📊 Média: {cards_a['avg']:.1f} vs {cards_b['avg']:.1f}")
-            response.append(f"🎯 Over 3.5: {cards_a['over_3_5']:.1f}% vs {cards_b['over_3_5']:.1f}%")
-            response.append(f"🎯 Over 4.5: {cards_a['over_4_5']:.1f}% vs {cards_b['over_4_5']:.1f}%")
-            response.append("")
+        lines.append("📈 Forma Recente")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append(f"  {team_a['name'][:15]:<15}  {form_a}")
+        lines.append(f"  {team_b['name'][:15]:<15}  {form_b}")
+        lines.append("")
         
-        # Main Picks
-        response.append("✅ **MAIN PICKS**")
-        picks = self._generate_main_picks(stats_a, stats_b, ht_stats_a, ht_stats_b, corners_a, corners_b, cards_a, cards_b)
-        for pick in picks:
-            response.append(pick)
-        response.append("")
+        # ═══════════════════════════════════════════════════════════════
+        # STATISTICS GRID
+        # ═══════════════════════════════════════════════════════════════
+        avg_over_2_5 = (stats_a['over_2_5'] + stats_b['over_2_5']) / 2
+        avg_over_1_5 = (stats_a['over_1_5'] + stats_b['over_1_5']) / 2
+        avg_btts = (stats_a['btts'] + stats_b['btts']) / 2
         
-        # Trends
-        response.append("📊 **TRENDS**")
-        trends = self._generate_trends(fixtures_a, fixtures_b, team_a["name"], team_b["name"])
-        for trend in trends[:5]:  # Limit to 5 trends
-            response.append(trend)
+        lines.append("📊 Estatísticas")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append(f"  {'Mercado':<14} {team_a['name'][:10]:<12} {team_b['name'][:10]:<12} {'Média':<10}")
+        lines.append(f"  {'─'*50}")
+        lines.append(f"  {'Over 2.5':<14} {stats_a['over_2_5']:>6.0f}%      {stats_b['over_2_5']:>6.0f}%      {avg_over_2_5:>6.0f}%")
+        lines.append(f"  {'Over 1.5':<14} {stats_a['over_1_5']:>6.0f}%      {stats_b['over_1_5']:>6.0f}%      {avg_over_1_5:>6.0f}%")
+        lines.append(f"  {'BTTS':<14} {stats_a['btts']:>6.0f}%      {stats_b['btts']:>6.0f}%      {avg_btts:>6.0f}%")
+        lines.append(f"  {'Média Gols':<14} {stats_a['avg_total_goals']:>6.1f}       {stats_b['avg_total_goals']:>6.1f}       {(stats_a['avg_total_goals']+stats_b['avg_total_goals'])/2:>6.1f}")
+        lines.append(f"  {'Vitórias':<14} {stats_a['win_rate']:>6.0f}%      {stats_b['win_rate']:>6.0f}%")
+        lines.append(f"  {'Clean Sheet':<14} {stats_a['clean_sheet_rate']:>6.0f}%      {stats_b['clean_sheet_rate']:>6.0f}%")
+        lines.append("")
         
-        return "\n".join(response)
+        # ═══════════════════════════════════════════════════════════════
+        # BEST BETS - PROBABILITY BARS
+        # ═══════════════════════════════════════════════════════════════
+        lines.append("🎯 Apostas Recomendadas")
+        lines.append("─────────────────────────────────────────────────────────")
+        
+        # Calculate probabilities (capped at 99%)
+        team_a_scores = self._cap_probability(100 - stats_a.get("failed_to_score_rate", 0))
+        team_b_scores = self._cap_probability(100 - stats_b.get("failed_to_score_rate", 0))
+        
+        bets = [
+            ("Over 1.5 Gols", self._cap_probability(avg_over_1_5)),
+            ("Over 2.5 Gols", self._cap_probability(avg_over_2_5)),
+            ("Under 2.5 Gols", self._cap_probability(100 - avg_over_2_5)),
+            ("Ambos Marcam", self._cap_probability(avg_btts)),
+            ("Ambos Não Marcam", self._cap_probability(100 - avg_btts)),
+            (f"{team_a['name'][:12]} Marca", team_a_scores),
+            (f"{team_b['name'][:12]} Marca", team_b_scores),
+        ]
+        
+        # Sort by probability
+        bets.sort(key=lambda x: x[1], reverse=True)
+        
+        for bet_name, prob in bets[:7]:
+            bar = self._create_probability_bar(prob)
+            conf = "ALTA" if prob >= 65 else "MÉDIA" if prob >= 50 else "BAIXA"
+            lines.append(f"  {bet_name:<22} {prob:>5.0f}%  {bar}  [{conf}]")
+        
+        lines.append("")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ODD VALUE ANALYSIS (if user provided odds)
+        # ═══════════════════════════════════════════════════════════════
+        if odds and markets:
+            lines.append("💰 Análise de Valor")
+            lines.append("─────────────────────────────────────────────────────────")
+            
+            for odd_str in odds:
+                try:
+                    odd_value = float(odd_str.replace(',', '.'))
+                    implied_prob = 100 / odd_value
+                    
+                    # Find matching market probability
+                    market_prob = None
+                    for market in markets:
+                        market_lower = market.lower()
+                        if "over 2.5" in market_lower:
+                            market_prob = avg_over_2_5
+                        elif "over 1.5" in market_lower:
+                            market_prob = avg_over_1_5
+                        elif "under 2.5" in market_lower:
+                            market_prob = 100 - avg_over_2_5
+                        elif "ambos marcam" in market_lower or "btts" in market_lower:
+                            if "não" in market_lower or "no" in market_lower:
+                                market_prob = 100 - avg_btts
+                            else:
+                                market_prob = avg_btts
+                    
+                    if market_prob:
+                        fair_odds = 100 / market_prob if market_prob > 0 else 1
+                        edge = ((odd_value - fair_odds) / fair_odds) * 100 if fair_odds > 0 else 0
+                        value = market_prob - implied_prob
+                        
+                        if edge >= 5:
+                            lines.append("")
+                            lines.append("  💎 ═══════════════════════════════════════════════")
+                            lines.append("  💎 OPORTUNIDADE DE VALOR DETECTADA NESTE MERCADO!")
+                            lines.append("  💎 ═══════════════════════════════════════════════")
+                            lines.append(f"  ✅ Odd {odd_value:.2f} tem VALOR!")
+                            lines.append(f"     Prob. implícita: {implied_prob:.0f}% | Nossa análise: {market_prob:.0f}%")
+                            lines.append(f"     Edge estimado: +{edge:.1f}%")
+                            lines.append("")
+                        elif value > -5:
+                            lines.append(f"  ⚠️ Odd {odd_value:.2f} é JUSTA (Prob. implícita: {implied_prob:.0f}% | Nossa: {market_prob:.0f}%)")
+                        else:
+                            lines.append(f"  ❌ Odd {odd_value:.2f} SEM VALOR (Prob. implícita: {implied_prob:.0f}% | Nossa: {market_prob:.0f}%)")
+                    else:
+                        lines.append(f"  📊 Odd informada: {odd_value:.2f} (Prob. implícita: {implied_prob:.0f}%)")
+                except:
+                    pass
+            
+            lines.append("")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # AI INSIGHT BOX
+        # ═══════════════════════════════════════════════════════════════
+        lines.append("💡 Insight de Mercado")
+        lines.append("─────────────────────────────────────────────────────────")
+        
+        insights = self._generate_market_insights(stats_a, stats_b, team_a['name'], team_b['name'])
+        for insight in insights[:2]:
+            lines.append(f"  {insight}")
+        
+        lines.append("")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # FOOTER
+        # ═══════════════════════════════════════════════════════════════
+        timestamp = datetime.utcnow().strftime("%H:%M UTC")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append(f"  BetStats Trader | {timestamp}")
+        lines.append("─────────────────────────────────────────────────────────")
+        
+        return "\n".join(lines)
+    
+    def _cap_probability(self, prob: float) -> float:
+        """Cap probability at 99% maximum - never show 100%"""
+        if prob >= 100:
+            return 99
+        if prob <= 0:
+            return 1
+        return min(99, max(1, prob))
+    
+    def _create_probability_bar(self, probability: float) -> str:
+        """Create ASCII probability bar"""
+        prob = self._cap_probability(probability)
+        filled = int(prob / 10)
+        empty = 10 - filled
+        return "[" + "=" * filled + " " * empty + "]"
+    
+    def _generate_market_insights(self, stats_a: Dict, stats_b: Dict, name_a: str, name_b: str) -> List[str]:
+        """Generate market insights in PT-BR"""
+        insights = []
+        
+        avg_over_2_5 = (stats_a.get("over_2_5", 0) + stats_b.get("over_2_5", 0)) / 2
+        avg_btts = (stats_a.get("btts", 0) + stats_b.get("btts", 0)) / 2
+        
+        if avg_over_2_5 >= 60:
+            insights.append("Padrão de muitos gols detectado. Over 2.5 com valor positivo.")
+        elif avg_over_2_5 <= 40:
+            insights.append("Tendência de poucos gols. Under 2.5 apresenta boas odds.")
+        
+        if avg_btts >= 60:
+            insights.append("Ambos os times marcam com frequência. BTTS Sim recomendado.")
+        elif avg_btts <= 35:
+            insights.append("Tendência de clean sheet. Considere BTTS Não.")
+        
+        if stats_a.get("win_rate", 0) >= 60 and stats_b.get("win_rate", 0) <= 40:
+            insights.append(f"{name_a} em ótima fase. Vitória do mandante com valor.")
+        elif stats_b.get("win_rate", 0) >= 60 and stats_a.get("win_rate", 0) <= 40:
+            insights.append(f"{name_b} em boa forma. Vitória do visitante pode ter valor.")
+        
+        if not insights:
+            insights.append("Jogo equilibrado. Considere apostas combinadas.")
+        
+        return insights
+    
+    def _get_best_picks(self, stats_a: Dict, stats_b: Dict, ht_a: Dict, ht_b: Dict, name_a: str, name_b: str) -> List[str]:
+        """Get best picks sorted by probability"""
+        picks = []
+        
+        # Calculate combined probabilities
+        avg_over_2_5 = (stats_a.get("over_2_5", 0) + stats_b.get("over_2_5", 0)) / 2
+        avg_under_2_5 = 100 - avg_over_2_5
+        avg_btts = (stats_a.get("btts", 0) + stats_b.get("btts", 0)) / 2
+        avg_btts_no = 100 - avg_btts
+        avg_over_1_5 = (stats_a.get("over_1_5", 0) + stats_b.get("over_1_5", 0)) / 2
+        
+        team_a_score = 100 - stats_a.get("failed_to_score_rate", 0)
+        team_b_score = 100 - stats_b.get("failed_to_score_rate", 0)
+        
+        # Create picks with probabilities
+        all_picks = [
+            (avg_over_2_5, f"⚽ **Over 2.5** → {avg_over_2_5:.0f}%", "high" if avg_over_2_5 >= 60 else "medium" if avg_over_2_5 >= 45 else "low"),
+            (avg_under_2_5, f"⚽ **Under 2.5** → {avg_under_2_5:.0f}%", "high" if avg_under_2_5 >= 60 else "medium" if avg_under_2_5 >= 45 else "low"),
+            (avg_btts, f"🤝 **BTTS Sim** → {avg_btts:.0f}%", "high" if avg_btts >= 60 else "medium" if avg_btts >= 45 else "low"),
+            (avg_btts_no, f"🚫 **BTTS Não** → {avg_btts_no:.0f}%", "high" if avg_btts_no >= 60 else "medium" if avg_btts_no >= 45 else "low"),
+            (avg_over_1_5, f"⚽ **Over 1.5** → {avg_over_1_5:.0f}%", "high" if avg_over_1_5 >= 70 else "medium" if avg_over_1_5 >= 55 else "low"),
+            (team_a_score, f"🎯 **{name_a} marca** → {team_a_score:.0f}%", "high" if team_a_score >= 75 else "medium" if team_a_score >= 60 else "low"),
+            (team_b_score, f"🎯 **{name_b} marca** → {team_b_score:.0f}%", "high" if team_b_score >= 75 else "medium" if team_b_score >= 60 else "low"),
+        ]
+        
+        # Sort by probability and filter high confidence
+        all_picks.sort(key=lambda x: x[0], reverse=True)
+        
+        for prob, text, confidence in all_picks:
+            if confidence == "high":
+                picks.append(f"🟢 {text}")
+            elif confidence == "medium":
+                picks.append(f"� {text}")
+            else:
+                picks.append(f"� {text}")
+        
+        return picks
+    
+    def _generate_insights(self, stats_a: Dict, stats_b: Dict, name_a: str, name_b: str, fixtures_a: List, fixtures_b: List) -> List[str]:
+        """Generate quick insights about the match"""
+        insights = []
+        
+        # Over/Under trend
+        if stats_a.get("over_2_5", 0) >= 60 and stats_b.get("over_2_5", 0) >= 60:
+            insights.append(f"Ambos times com alto índice de Over 2.5 - jogo com potencial de gols")
+        elif stats_a.get("over_2_5", 0) <= 40 and stats_b.get("over_2_5", 0) <= 40:
+            insights.append(f"Ambos times com baixo índice de gols - considere Under 2.5")
+        
+        # BTTS trend
+        if stats_a.get("btts", 0) >= 60 and stats_b.get("btts", 0) >= 60:
+            insights.append(f"Alta probabilidade de ambos marcarem")
+        
+        # Clean sheet
+        if stats_a.get("clean_sheet_rate", 0) >= 40:
+            insights.append(f"{name_a} mantém clean sheet em {stats_a['clean_sheet_rate']:.0f}% dos jogos")
+        if stats_b.get("clean_sheet_rate", 0) >= 40:
+            insights.append(f"{name_b} mantém clean sheet em {stats_b['clean_sheet_rate']:.0f}% dos jogos")
+        
+        # Recent form - use first 5 (most recent) since list is sorted newest first
+        if len(fixtures_a) >= 5:
+            recent_wins_a = sum(1 for f in fixtures_a[:5] if self._get_result(f, fixtures_a[0].get("teams", {}).get("home", {}).get("id", 0)) == "W")
+            if recent_wins_a >= 4:
+                insights.append(f"{name_a} em excelente fase - {recent_wins_a}/5 vitórias")
+        
+        return insights
+    
+    def _get_result(self, fixture: Dict, team_id: int) -> str:
+        """Get result for a team in a fixture"""
+        teams = fixture.get("teams", {})
+        goals = fixture.get("goals", {})
+        home_goals = goals.get("home", 0)
+        away_goals = goals.get("away", 0)
+        
+        if teams.get("home", {}).get("id") == team_id:
+            return "W" if home_goals > away_goals else "D" if home_goals == away_goals else "L"
+        else:
+            return "W" if away_goals > home_goals else "D" if away_goals == home_goals else "L"
     
     def _generate_team_analysis(self, team: Dict, fixtures: List[Dict], home_away: str, metrics: List[str]) -> str:
-        """Generate team statistics analysis"""
+        """Generate team statistics analysis - premium trader terminal style"""
+        from datetime import datetime
+        
         if not fixtures:
-            return f"❌ Sem dados suficientes para {team['name']}."
+            return self._format_error(f"Insufficient data for {team['name']}")
         
         stats = self._calculate_team_stats(fixtures, team["id"])
-        ht_stats = self._calculate_ht_stats(fixtures, team["id"])
         
-        response = []
-        response.append(f"📊 **{team['name']} - Últimos {len(fixtures)} jogos**")
-        if home_away != "all":
-            response.append(f"🏠 Filtro: {home_away.upper()}")
-        response.append("")
+        lines = []
         
-        # Recent games
-        response.append("📋 **JOGOS RECENTES**")
-        for fixture in fixtures[-10:]:
-            teams = fixture.get("teams", {})
+        # Header
+        lines.append("┌─────────────────────────────────────────────────────────┐")
+        lines.append("│  TEAM INTELLIGENCE                                      │")
+        lines.append("├─────────────────────────────────────────────────────────┤")
+        lines.append(f"│  {team['name'].upper():^55} │")
+        lines.append(f"│  Sample: {len(fixtures)} matches | Filter: {home_away.upper():<20}     │")
+        lines.append("└─────────────────────────────────────────────────────────┘")
+        lines.append("")
+        
+        # Form - use first 5 (most recent) since list is sorted newest first
+        form = self._get_form_string(fixtures[:5], team['id'])
+        lines.append("RECENT FORM (Last 5)")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append(f"  {form}")
+        lines.append("")
+        
+        # Statistics Grid
+        lines.append("STATISTICS")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append(f"  {'METRIC':<20} {'VALUE':<15} {'RATING':<10}")
+        lines.append(f"  {'─'*45}")
+        
+        stat_items = [
+            ("Over 2.5", stats['over_2_5'], "%"),
+            ("Over 1.5", stats['over_1_5'], "%"),
+            ("BTTS", stats['btts'], "%"),
+            ("Win Rate", stats['win_rate'], "%"),
+            ("Clean Sheet", stats['clean_sheet_rate'], "%"),
+            ("Avg Goals", stats['avg_total_goals'], ""),
+            ("Goals For", stats['avg_goals_for'], ""),
+            ("Goals Against", stats['avg_goals_against'], ""),
+        ]
+        
+        for name, value, suffix in stat_items:
+            if suffix == "%":
+                rating = "HIGH" if value >= 60 else "MED" if value >= 40 else "LOW"
+                lines.append(f"  {name:<20} {value:>6.0f}%        [{rating}]")
+            else:
+                lines.append(f"  {name:<20} {value:>6.1f}")
+        
+        lines.append("")
+        
+        # Recent Results
+        lines.append("RECENT RESULTS")
+        lines.append("─────────────────────────────────────────────────────────")
+        
+        for fixture in fixtures[:5]:
+            teams_data = fixture.get("teams", {})
             goals = fixture.get("goals", {})
-            home_team = teams.get("home", {})
-            away_team = teams.get("away", {})
-            
+            home_team = teams_data.get("home", {})
+            away_team = teams_data.get("away", {})
             home_goals = goals.get("home", 0)
             away_goals = goals.get("away", 0)
             
-            # Determine result for analyzed team
             if home_team.get("id") == team["id"]:
                 result = "W" if home_goals > away_goals else "D" if home_goals == away_goals else "L"
-                score_line = f"{home_team['name']} {home_goals}-{away_goals} {away_team['name']} ({result})"
+                opponent = away_team.get('name', 'Unknown')[:15]
+                score = f"{home_goals}-{away_goals}"
+                venue = "H"
             else:
                 result = "W" if away_goals > home_goals else "D" if away_goals == home_goals else "L"
-                score_line = f"{away_team['name']} {away_goals}-{home_goals} {home_team['name']} ({result})"
+                opponent = home_team.get('name', 'Unknown')[:15]
+                score = f"{away_goals}-{home_goals}"
+                venue = "A"
             
-            response.append(f"• {score_line}")
+            lines.append(f"  [{result}] {score}  vs {opponent:<15} ({venue})")
         
-        response.append("")
+        lines.append("")
         
-        # Requested metrics
-        response.append("📈 **MÉTRICAS**")
-        metric_display = {
-            "over_0_5": f"Over 0.5: {stats['over_0_5']:.1f}%",
-            "over_1_5": f"Over 1.5: {stats['over_1_5']:.1f}%",
-            "over_2_5": f"Over 2.5: {stats['over_2_5']:.1f}%",
-            "over_3_5": f"Over 3.5: {stats['over_3_5']:.1f}%",
-            "btts": f"BTTS: {stats['btts']:.1f}%",
-            "win_rate": f"Vitórias: {stats['win_rate']:.1f}%",
-            "draw_rate": f"Empates: {stats['draw_rate']:.1f}%",
-            "loss_rate": f"Derrotas: {stats['loss_rate']:.1f}%",
-            "clean_sheet_rate": f"Clean Sheet: {stats['clean_sheet_rate']:.1f}%",
-            "failed_to_score_rate": f"Não marcou: {stats['failed_to_score_rate']:.1f}%",
-            "avg_goals_for": f"Média gols pró: {stats['avg_goals_for']:.1f}",
-            "avg_goals_against": f"Média gols contra: {stats['avg_goals_against']:.1f}",
-            "avg_total_goals": f"Média total gols: {stats['avg_total_goals']:.1f}",
-        }
+        # Footer
+        timestamp = datetime.utcnow().strftime("%H:%M UTC")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append(f"  Generated by BetStats Trader | {timestamp}")
+        lines.append("─────────────────────────────────────────────────────────")
         
-        for metric in metrics:
-            if metric in metric_display:
-                response.append(f"• {metric_display[metric]}")
-        
-        return "\n".join(response)
+        return "\n".join(lines)
     
     def _calculate_team_stats(self, fixtures: List[Dict], team_id: int) -> Dict:
         """Calculate team statistics"""
@@ -418,16 +1267,83 @@ class ChatBot:
         """Generate trend insights"""
         trends = []
         
-        # Analyze patterns
+        # Analyze patterns - use first 5 (most recent) since list is sorted newest first
         if len(fixtures_a) >= 5:
-            a_over_2_5_recent = sum(1 for f in fixtures_a[-5:] if (f.get("goals", {}).get("home", 0) + f.get("goals", {}).get("away", 0)) > 2)
+            a_over_2_5_recent = sum(1 for f in fixtures_a[:5] if (f.get("goals", {}).get("home", 0) + f.get("goals", {}).get("away", 0)) > 2)
             trends.append(f"📈 {team_a_name}: {a_over_2_5_recent}/5 últimos jogos com Over 2.5")
         
         if len(fixtures_b) >= 5:
-            b_btts_recent = sum(1 for f in fixtures_b[-5:] if f.get("goals", {}).get("home", 0) > 0 and f.get("goals", {}).get("away", 0) > 0)
+            b_btts_recent = sum(1 for f in fixtures_b[:5] if f.get("goals", {}).get("home", 0) > 0 and f.get("goals", {}).get("away", 0) > 0)
             trends.append(f"📈 {team_b_name}: {b_btts_recent}/5 últimos jogos com BTTS")
         
         # Head to head (if available)
         # This would require additional API calls to get H2H fixtures
         
         return trends
+    
+    def _check_analysis_limit(self, user: User) -> bool:
+        """Check if user has remaining analyses for today based on their plan"""
+        from datetime import date
+        
+        try:
+            # Get user's plan with safe access
+            plan = 'free'
+            subscription = getattr(user, 'subscription', None)
+            if subscription:
+                sub_plan = getattr(subscription, 'plan', None)
+                if sub_plan:
+                    plan = sub_plan.lower()
+            
+            # Get daily limit for plan
+            daily_limit = self.PLAN_LIMITS.get(plan, 5)
+            
+            # Get today's usage count
+            today = date.today().isoformat()
+            
+            # Use a class-level cache instead of user object to avoid issues
+            if not hasattr(self, '_usage_cache'):
+                self._usage_cache = {}
+            
+            user_id = getattr(user, 'id', 'anonymous')
+            cache_key = f"{user_id}_{today}"
+            
+            current_usage = self._usage_cache.get(cache_key, 0)
+            
+            if current_usage >= daily_limit:
+                return False
+            
+            # Increment usage
+            self._usage_cache[cache_key] = current_usage + 1
+            return True
+        except Exception as e:
+            # If any error, allow the request (fail open)
+            import logging
+            logging.getLogger(__name__).warning(f"Error checking limit: {e}")
+            return True
+    
+    def _format_limit_reached(self, user: User) -> str:
+        """Format message when user reaches their daily analysis limit"""
+        plan = 'Free'
+        subscription = getattr(user, 'subscription', None)
+        if subscription and getattr(subscription, 'plan', None):
+            plan = subscription.plan
+        
+        daily_limit = self.PLAN_LIMITS.get(plan.lower(), 5)
+        
+        lines = []
+        lines.append("⚠️ Limite Diário Atingido")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append("")
+        lines.append(f"Você atingiu o limite diário do seu plano ({daily_limit} análises).")
+        lines.append("")
+        lines.append("Faça upgrade para continuar analisando:")
+        lines.append("")
+        if plan.lower() == 'free':
+            lines.append("  📊 Pro  → 25 análises/dia  (R$49/mês)")
+            lines.append("  👑 Elite → 100 análises/dia (R$99/mês)")
+        elif plan.lower() == 'pro':
+            lines.append("  👑 Elite → 100 análises/dia (R$99/mês)")
+        lines.append("")
+        lines.append("💡 Acesse /plans para fazer upgrade agora.")
+        
+        return "\n".join(lines)
